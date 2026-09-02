@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= typeof title !== 'undefined' ? title : 'Hui — rotating savings groups' %></title>
+  <link rel="stylesheet" href="/style.css">
+  <script>window.CONFIG = <%- JSON.stringify(config) %>;</script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/dashboard">
+    <span class="mark" aria-hidden="true"></span>
+    <span>Hui</span>
+  </a>
+  <nav id="nav" hidden>
+    <span id="who" class="who"></span>
+    <button class="link" id="signout" type="button">Sign out</button>
+  </nav>
+</header>
+<main>

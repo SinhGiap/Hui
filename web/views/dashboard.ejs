@@ -1,0 +1,39 @@
+<%- include('header', { title: 'Your circles — Hui' }) %>
+
+<section class="stack">
+  <div class="rowhead">
+    <div>
+      <h1>Your circles</h1>
+      <p class="sub" id="scoreline">Loading your reliability score…</p>
+    </div>
+    <button class="primary" id="newgroup" type="button">Start a circle</button>
+  </div>
+
+  <div id="groups" class="grid">
+    <p class="muted">Loading…</p>
+  </div>
+
+  <form class="card form" id="creategroup" hidden>
+    <h2>Start a circle</h2>
+    <div class="two">
+      <label class="field"><span>Circle name</span><input name="name" required maxlength="80" placeholder="Sunday Market Hui"></label>
+      <label class="field"><span>Members</span><input name="memberCap" type="number" min="2" max="30" value="6" required></label>
+    </div>
+    <div class="two">
+      <label class="field"><span>Contribution per cycle</span><input name="contributionAmount" type="number" min="1" value="2000000" required></label>
+      <label class="field"><span>Currency</span><input name="currency" maxlength="3" value="VND" required pattern="[A-Za-z]{3}"></label>
+    </div>
+    <div class="two">
+      <label class="field"><span>Cycle length (days)</span><input name="cycleLengthDays" type="number" min="1" max="90" value="14" required></label>
+      <label class="field"><span>Country</span><input name="country" maxlength="2" value="VN" required pattern="[A-Za-z]{2}"><small class="hint">Sets the public-holiday calendar used for due dates.</small></label>
+    </div>
+    <label class="field"><span>First cycle starts</span><input name="startDate" type="date" required></label>
+    <div class="actions">
+      <button class="primary" type="submit">Create</button>
+      <button class="link" type="button" id="cancelcreate">Cancel</button>
+    </div>
+    <p class="error" id="createerror" role="alert" hidden></p>
+  </form>
+</section>
+
+<%- include('footer') %>

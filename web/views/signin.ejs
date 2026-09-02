@@ -1,0 +1,42 @@
+<%- include('header', { title: 'Sign in — Hui' }) %>
+
+<section class="hero">
+  <div class="hero-copy">
+    <h1>The savings circle your family already trusts, with a memory.</h1>
+    <p>
+      A <strong>hui</strong> — or <em>tontine</em>, <em>chit fund</em>, <em>ROSCA</em> — is a group of people who each put in a
+      fixed amount every cycle, with the whole pot going to one member at a time until everyone has been paid once.
+      It has funded shops, weddings and school fees across South East Asia for generations, entirely on trust.
+    </p>
+    <p>
+      Hui keeps the ledger, works out who is due to be paid, and turns each member's payment history into a
+      <strong>reliability score</strong> — so a new circle can see who they are admitting before the money starts moving.
+    </p>
+  </div>
+
+  <div class="card auth">
+    <div class="tabs">
+      <button class="tab active" data-mode="signin" type="button">Sign in</button>
+      <button class="tab" data-mode="register" type="button">Create account</button>
+    </div>
+    <form id="authform">
+      <label class="field reg-only" hidden>
+        <span>Full name</span>
+        <input name="name" type="text" autocomplete="name" maxlength="80">
+      </label>
+      <label class="field">
+        <span>Email</span>
+        <input name="email" type="email" autocomplete="email" required maxlength="120">
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200">
+        <small class="hint reg-only" hidden>At least 8 characters.</small>
+      </label>
+      <button class="primary" type="submit">Sign in</button>
+      <p class="error" id="autherror" role="alert" hidden></p>
+    </form>
+  </div>
+</section>
+
+<%- include('footer') %>
