@@ -1,70 +1,82 @@
-<%- include('header', { title: 'Circle — Hui' }) %>
+<%- include('header', { title: 'Circle — Hụi' }) %>
 <script>window.GROUP_ID = <%- JSON.stringify(groupId) %>;</script>
 
-<section class="stack">
-  <div class="rowhead">
+<section class="section">
+  <div class="wrap stack">
+    <div class="gtop">
+      <div id="gring"></div>
+      <div>
+        <div class="rowhead">
+          <div>
+            <h1 id="gname">Loading…</h1>
+            <p class="sub" id="gsub"></p>
+          </div>
+          <div class="headactions">
+            <button class="ghost" id="joinbtn" type="button" hidden>Join this circle</button>
+            <button class="primary" id="startbtn" type="button" hidden>Start the rotation</button>
+          </div>
+        </div>
+        <div class="facts" id="facts"></div>
+      </div>
+    </div>
+
     <div>
-      <h1 id="gname">Loading…</h1>
-      <p class="sub" id="gsub"></p>
-    </div>
-    <div class="headactions">
-      <button class="ghost" id="joinbtn" type="button" hidden>Join this circle</button>
-      <button class="primary" id="startbtn" type="button" hidden>Start the rotation</button>
-    </div>
-  </div>
-
-  <div class="stats" id="stats"></div>
-
-  <div class="tabs wide">
-    <button class="tab active" data-panel="members" type="button">Members</button>
-    <button class="tab" data-panel="ledger" type="button">Ledger</button>
-    <button class="tab" data-panel="report" type="button">Reports</button>
-  </div>
-
-  <div class="panel" data-panel="members">
-    <table class="table">
-      <thead><tr><th>#</th><th>Member</th><th>Reliability</th><th>On-time history</th><th>Payout</th></tr></thead>
-      <tbody id="members"></tbody>
-    </table>
-  </div>
-
-  <div class="panel" data-panel="ledger" hidden>
-    <form class="card form inline" id="payform" hidden>
-      <h2>Log your contribution</h2>
-      <div class="two">
-        <label class="field"><span>Cycle</span><select name="cycle" id="cyclepick"></select></label>
-        <label class="field"><span>Amount</span><input name="amount" type="number" id="payamount" readonly></label>
+      <div class="tabs">
+        <button class="tab active" data-panel="members" type="button">Members</button>
+        <button class="tab" data-panel="ledger" type="button">Ledger</button>
+        <button class="tab" data-panel="report" type="button">Reports</button>
       </div>
-      <label class="field">
-        <span>Payment evidence (optional)</span>
-        <input type="file" name="evidence" accept="image/png,image/jpeg,image/webp">
-        <small class="hint">Uploaded straight to S3 and served back through CloudFront.</small>
-      </label>
-      <div class="actions">
-        <button class="primary" type="submit">Log contribution</button>
-        <span class="muted" id="paystatus"></span>
+
+      <div class="panel tabbed" data-panel="members">
+        <table class="table">
+          <thead><tr><th>Seat</th><th>Member</th><th>Reliability</th><th>Paid on time</th><th>Takes the pot</th></tr></thead>
+          <tbody id="members"></tbody>
+        </table>
       </div>
-      <p class="error" id="payerror" role="alert" hidden></p>
-    </form>
 
-    <table class="table">
-      <thead><tr><th>Cycle</th><th>Member</th><th>Amount</th><th>Due</th><th>Paid</th><th>Status</th><th>Evidence</th></tr></thead>
-      <tbody id="ledger"></tbody>
-    </table>
-  </div>
+      <div class="panel tabbed" data-panel="ledger" hidden>
+        <form class="form inline" id="payform" hidden>
+          <h2>Log your contribution</h2>
+          <div class="two">
+            <label class="field"><span>Cycle</span><select name="cycle" id="cyclepick"></select></label>
+            <label class="field"><span>Amount</span><input name="amount" type="number" id="payamount" readonly></label>
+          </div>
+          <label class="field">
+            <span>Payment evidence, if you have it</span>
+            <input type="file" name="evidence" accept="image/png,image/jpeg,image/webp">
+            <small class="hint">Uploaded straight to S3 and served back through CloudFront.</small>
+          </label>
+          <div class="actions">
+            <button class="primary" type="submit">Log contribution</button>
+            <span class="muted small" id="paystatus"></span>
+          </div>
+          <p class="error" id="payerror" role="alert" hidden></p>
+        </form>
 
-  <div class="panel" data-panel="report" hidden>
-    <div class="rowhead tight">
-      <h2>On-time reporting</h2>
-      <span class="pill" id="reportsource">—</span>
+        <table class="table">
+          <thead><tr><th>Cycle</th><th>Member</th><th>Amount</th><th>Due</th><th>Paid</th><th>Status</th><th>Evidence</th></tr></thead>
+          <tbody id="ledger"></tbody>
+        </table>
+      </div>
+
+      <div class="panel tabbed" data-panel="report" hidden>
+        <div class="rowhead tight">
+          <h2>Who pays on time</h2>
+          <span class="tag wait small" id="reportsource">—</span>
+        </div>
+        <p class="muted small">Built nightly by EventBridge into S3, catalogued by Glue, queried here through Athena.</p>
+        <div id="reportnote" class="note" hidden></div>
+        <div class="legend small">
+          <span class="tag">Paid on time</span>
+          <span class="tag late">Paid late</span>
+        </div>
+        <div class="chart" id="chart"></div>
+        <table class="table">
+          <thead><tr><th>Member</th><th>Payments</th><th>On time</th><th>On-time rate</th></tr></thead>
+          <tbody id="reportrows"></tbody>
+        </table>
+      </div>
     </div>
-    <p class="muted small">Built nightly by EventBridge → Lambda → S3 → Glue, and queried here through Athena.</p>
-    <div id="reportnote" class="note" hidden></div>
-    <div class="chart" id="chart"></div>
-    <table class="table">
-      <thead><tr><th>Member</th><th>Payments</th><th>On time</th><th>On-time rate</th></tr></thead>
-      <tbody id="reportrows"></tbody>
-    </table>
   </div>
 </section>
 

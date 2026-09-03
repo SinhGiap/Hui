@@ -11,10 +11,10 @@ const { reliability, isOnTime } = require('../api/core');
 
 const PASSWORD = 'Rosca!2026';
 const PEOPLE = [
-  { name: 'Mai Tran', email: 'mai@example.com', pattern: [1, 1, 1, 1] },
-  { name: 'Hui Nguyen', email: 'hui@example.com', pattern: [1, 1, 0, 1] },
-  { name: 'Duc Pham', email: 'duc@example.com', pattern: [1, 0, 0, 1] },
-  { name: 'Linh Vo', email: 'linh@example.com', pattern: [1, 1, 1, 0] },
+  { name: 'Mai Trần', email: 'mai@example.com', pattern: [1, 1, 1, 1] },
+  { name: 'Hương Nguyễn', email: 'huong@example.com', pattern: [1, 1, 0, 1] },
+  { name: 'Đức Phạm', email: 'duc@example.com', pattern: [1, 0, 0, 1] },
+  { name: 'Linh Võ', email: 'linh@example.com', pattern: [1, 1, 1, 0] },
 ];
 
 const call = (method, path, body, token) =>
@@ -41,7 +41,7 @@ async function main() {
 
   console.log('creating group...');
   const { group } = await call('POST', '/groups', {
-    name: 'Sunday Market Hui',
+    name: 'Hụi Chợ Bến Thành',
     contributionAmount: 2000000,
     currency: 'VND',
     country: 'VN',

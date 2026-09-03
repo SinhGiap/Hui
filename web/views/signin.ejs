@@ -1,41 +1,67 @@
-<%- include('header', { title: 'Sign in — Hui' }) %>
+<%- include('header', { title: 'Sign in — Hụi' }) %>
 
-<section class="hero">
-  <div class="hero-copy">
-    <h1>The savings circle your family already trusts, with a memory.</h1>
-    <p>
-      A <strong>hui</strong> — or <em>tontine</em>, <em>chit fund</em>, <em>ROSCA</em> — is a group of people who each put in a
-      fixed amount every cycle, with the whole pot going to one member at a time until everyone has been paid once.
-      It has funded shops, weddings and school fees across South East Asia for generations, entirely on trust.
-    </p>
-    <p>
-      Hui keeps the ledger, works out who is due to be paid, and turns each member's payment history into a
-      <strong>reliability score</strong> — so a new circle can see who they are admitting before the money starts moving.
-    </p>
-  </div>
-
-  <div class="card auth">
-    <div class="tabs">
-      <button class="tab active" data-mode="signin" type="button">Sign in</button>
-      <button class="tab" data-mode="register" type="button">Create account</button>
+<section class="band">
+  <div class="wrap">
+    <div class="ringside">
+      <div id="herochart"></div>
+      <p class="ringcap" id="herocap"></p>
     </div>
-    <form id="authform">
-      <label class="field reg-only" hidden>
-        <span>Full name</span>
-        <input name="name" type="text" autocomplete="name" maxlength="80">
-      </label>
-      <label class="field">
-        <span>Email</span>
-        <input name="email" type="email" autocomplete="email" required maxlength="120">
-      </label>
-      <label class="field">
-        <span>Password</span>
-        <input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200">
-        <small class="hint reg-only" hidden>At least 8 characters.</small>
-      </label>
-      <button class="primary" type="submit">Sign in</button>
-      <p class="error" id="autherror" role="alert" hidden></p>
-    </form>
+    <div>
+      <h1 class="lede">Everyone pays in. One takes the pot. Next cycle, the next person.</h1>
+      <p>
+        That is a hụi — the savings circle that has funded shops, weddings and school fees across
+        South East Asia for generations, on nothing but trust and a paper book.
+      </p>
+      <p>
+        This app keeps the book. It works out who is owed the pot, records who paid on time, and gives
+        every member a reliability score they can carry into the next circle.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap entry">
+    <div class="panel">
+      <div class="tabs inset">
+        <button class="tab active" data-mode="signin" type="button">Sign in</button>
+        <button class="tab" data-mode="register" type="button">Create account</button>
+      </div>
+      <form id="authform">
+        <label class="field reg-only" hidden>
+          <span>Full name</span>
+          <input name="name" type="text" autocomplete="name" maxlength="80">
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input name="email" type="email" autocomplete="email" required maxlength="120">
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200">
+          <small class="hint reg-only" hidden>At least 8 characters.</small>
+        </label>
+        <button class="primary" type="submit">Sign in</button>
+        <p class="error" id="autherror" role="alert" hidden></p>
+      </form>
+    </div>
+
+    <div>
+      <h2>What the reliability score is for</h2>
+      <p>
+        A hụi only works if the people in it pay. Traditionally you learn that the hard way, once,
+        and the circle never recovers.
+      </p>
+      <p>
+        Here every contribution is logged against its due date, so each member carries a number from
+        0 to 100. A new member starts at 50 — neither trusted nor doubted. One early payment cannot buy
+        a perfect record, and one late payment does not wipe out a good one.
+      </p>
+      <p class="muted small">
+        Due dates skip weekends and national public holidays, so nobody is marked late for a day the
+        banks were shut.
+      </p>
+    </div>
   </div>
 </section>
 

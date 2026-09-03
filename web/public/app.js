@@ -11,6 +11,14 @@ const el = (tag, props = {}, ...kids) => {
   return node;
 };
 
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svg = (tag, attrs = {}, ...kids) => {
+  const node = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) node.setAttribute(k, String(v));
+  kids.flat().forEach((k) => k != null && node.append(k));
+  return node;
+};
+
 const token = {
   get: () => localStorage.getItem('hui.token'),
   set: (t) => localStorage.setItem('hui.token', t),
@@ -34,8 +42,44 @@ const day = (iso) => (iso ? String(iso).slice(0, 10) : '—');
 
 function scoreCell(score) {
   return el('div', { className: 'score' },
-    el('div', { className: 'bar' }, el('i', { style: `width:${Math.max(2, score)}%` })),
+    el('div', { className: 'score-bar' }, el('i', { style: `width:${Math.max(2, score)}%` })),
     el('span', {}, String(score)));
+}
+
+// ------------------------------------------------------------------- the ring
+// A rotation is the one thing a paper hui book cannot draw, so it is the hero on
+// every page: seats around a circle, the pot resting on whoever's turn it is.
+// Same function at 300px on the landing page, 232px on a circle, 46px in a row.
+// Seats carry no names — the table underneath maps seat to member, and crowding
+// six diacritic-heavy names into 13px dots would only make both unreadable.
+function ringSvg({ size = 232, seats, current = 0, filled = 0, center, caption }) {
+  const big = size >= 150;
+  const seatR = big ? 13 : Math.max(3, size / 13);
+  const radius = size / 2 - seatR - (big ? 10 : 4);
+  const mid = size / 2;
+  const at = (i) => {
+    const angle = (-90 + (360 / seats) * i) * (Math.PI / 180);
+    return [mid + radius * Math.cos(angle), mid + radius * Math.sin(angle)];
+  };
+
+  const root = svg('svg', { class: 'ring', viewBox: `0 0 ${size} ${size}`, width: size, height: size, role: 'img' });
+  root.append(svg('title', {}, caption || `Seat ${current} of ${seats}`));
+  root.append(svg('circle', { class: 'ring-track', cx: mid, cy: mid, r: radius }));
+
+  for (let i = 0; i < seats; i++) {
+    const [x, y] = at(i);
+    const state = i + 1 === current ? 'now' : i < filled ? 'done' : '';
+    root.append(svg('circle', { class: `seat ${state}`.trim(), cx: x, cy: y, r: seatR }));
+  }
+  if (current) {
+    const [x, y] = at(current - 1);
+    root.append(svg('circle', { class: 'pot', cx: x, cy: y, r: seatR + (big ? 8 : 4) }));
+  }
+  if (big && center) {
+    root.append(svg('text', { class: 'ring-n', x: mid, y: mid + 3 }, center[0]));
+    root.append(svg('text', { class: 'ring-of', x: mid, y: mid + 21 }, center[1]));
+  }
+  return root;
 }
 
 // ------------------------------------------------------------------ chrome
@@ -44,7 +88,7 @@ async function mountNav() {
   if (!token.get()) return null;
   try {
     const { user } = await api('/me');
-    $('#who').textContent = `${user.name} · reliability ${user.reliability}`;
+    $('#who').textContent = `${user.name}, reliability ${user.reliability}`;
     $('#nav').hidden = false;
     $('#signout').onclick = () => { token.clear(); location.href = '/'; };
     return user;
@@ -54,8 +98,59 @@ async function mountNav() {
 }
 
 // ------------------------------------------------------------------ sign in
+const HERO_NAMES = ['Mai', 'Hương', 'Đức', 'Linh', 'Tuấn', 'Bảo'];
+
+// The one piece of motion on the site: the pot travels a single lap on load and
+// then rests. It is here because the mechanic is hard to explain in a sentence
+// and obvious in three seconds of movement.
+function initHero() {
+  const host = $('#herochart');
+  const cap = $('#herocap');
+  if (!host) return;
+  const seats = HERO_NAMES.length;
+
+  const ring = ringSvg({ size: 300, seats, current: 1, filled: 0, center: ['1', `of ${seats} cycles`] });
+  ring.classList.add('ring-dark');
+  host.append(ring);
+
+  const dots = [...ring.querySelectorAll('.seat')];
+  const pot = ring.querySelector('.pot');
+  const number = ring.querySelector('.ring-n');
+
+  const show = (cycle) => {
+    const seat = dots[cycle - 1];
+    pot.setAttribute('cx', seat.getAttribute('cx'));
+    pot.setAttribute('cy', seat.getAttribute('cy'));
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('now', i === cycle - 1);
+      dot.classList.toggle('done', i < cycle - 1);
+    });
+    number.textContent = String(cycle);
+    cap.textContent = '';
+    cap.append(`Cycle ${cycle}, and the pot goes to `, el('b', {}, HERO_NAMES[cycle - 1]), '.');
+  };
+
+  show(1);
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  let cycle = 1;
+  setTimeout(() => {
+    const step = setInterval(() => {
+      cycle += 1;
+      if (cycle > seats) {
+        clearInterval(step);
+        cap.textContent = `${seats} cycles, ${seats} payouts, and everyone has been paid exactly once.`;
+        return;
+      }
+      show(cycle);
+    }, 620);
+  }, 700);
+}
+
 function initSignIn() {
   if (token.get()) { location.href = '/dashboard'; return; }
+  initHero();
+
   let mode = 'signin';
   const form = $('#authform');
   const err = $('#autherror');
@@ -90,7 +185,7 @@ function initSignIn() {
 // ----------------------------------------------------------------- dashboard
 async function initDashboard(user) {
   if (!user) { location.href = '/'; return; }
-  $('#scoreline').textContent = `Your reliability score is ${user.reliability} — built from ${user.onTimeCount} on-time of ${user.contribCount} contributions.`;
+  $('#scoreline').textContent = `Your reliability score is ${user.reliability}. It comes from ${user.onTimeCount} on-time payments out of ${user.contribCount}.`;
 
   const form = $('#creategroup');
   form.startDate.value = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
@@ -125,17 +220,24 @@ async function initDashboard(user) {
   const box = $('#groups');
   box.textContent = '';
   if (!groups.length) {
-    box.append(el('p', { className: 'muted' }, 'No circles yet. Start one, then share the link with people you trust.'));
+    box.append(el('li', { className: 'empty' }, 'You are not in a circle yet. Start one, then send the link to people you trust.'));
     return;
   }
   for (const g of groups) {
-    const state = g.status === 'OPEN'
-      ? el('span', { className: 'pill grey' }, `${g.memberCount}/${g.memberCap} joined`)
-      : el('span', { className: 'pill' }, g.complete ? 'complete' : `cycle ${g.currentCycle} of ${g.dueDates.length}`);
-    box.append(el('a', { className: 'card groupcard', href: `/group/${g.groupId}` },
-      el('h3', {}, g.name),
-      el('p', { className: 'muted small' }, `${money(g.contributionAmount, g.currency)} every ${g.cycleLengthDays} days · pot ${money(g.contributionAmount * g.memberCount, g.currency)}`),
-      state));
+    const open = g.status === 'OPEN';
+    const seats = open ? g.memberCap : g.dueDates.length;
+    const current = !open && !g.complete ? g.currentCycle : 0;
+    const filled = open ? g.memberCount : g.complete ? seats : g.currentCycle - 1;
+    const state = open ? `${g.memberCount} of ${g.memberCap} seats taken`
+      : g.complete ? 'Everyone has been paid' : `Cycle ${g.currentCycle} of ${g.dueDates.length}`;
+
+    box.append(el('li', {}, el('a', { className: 'circle-row', href: `/group/${g.groupId}` },
+      ringSvg({ size: 46, seats, current, filled, caption: state }),
+      el('div', { className: 'circle-body' },
+        el('h3', {}, g.name),
+        el('p', { className: 'muted small', style: 'margin:0' },
+          `${money(g.contributionAmount, g.currency)} every ${g.cycleLengthDays} days, for a pot of ${money(g.contributionAmount * g.memberCount, g.currency)}.`)),
+      el('span', { className: `tag ${open ? 'wait' : current ? 'pot' : ''}`.trim() }, state))));
   }
 }
 
@@ -147,7 +249,7 @@ async function initGroup(user) {
   document.querySelectorAll('.tab[data-panel]').forEach((tab) => {
     tab.onclick = () => {
       document.querySelectorAll('.tab[data-panel]').forEach((t) => t.classList.toggle('active', t === tab));
-      document.querySelectorAll('.panel').forEach((p) => { p.hidden = p.dataset.panel !== tab.dataset.panel; });
+      document.querySelectorAll('.panel[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== tab.dataset.panel; });
       if (tab.dataset.panel === 'report') loadReport(id);
     };
   });
@@ -163,35 +265,51 @@ async function render(id, user) {
   // it from the third-party exchange-rate service.
   const d = await api(`/groups/${id}?display=USD`);
   const g = d.group;
+  const open = g.status === 'OPEN';
 
   $('#gname').textContent = g.name;
-  $('#gsub').textContent = `Organised by ${g.ownerName} · ${money(g.contributionAmount, g.currency)} every ${g.cycleLengthDays} days`
-    + (d.converted ? ` (≈ ${money(d.converted.amount, d.converted.currency)})` : '');
+  $('#gsub').textContent = `Organised by ${g.ownerName}. ${money(g.contributionAmount, g.currency)} from each member every ${g.cycleLengthDays} days.`;
 
-  const stats = $('#stats');
-  stats.textContent = '';
-  const cycleLabel = g.status === 'OPEN' ? 'not started' : g.complete ? 'complete' : `${g.currentCycle} of ${g.dueDates.length}`;
   const nextDue = g.status === 'ACTIVE' && !g.complete ? g.dueDates[g.currentCycle - 1] : null;
   const recipient = nextDue ? d.members.find((m) => m.payoutPosition === g.currentCycle) : null;
-  for (const [label, value] of [
-    ['Pot per cycle', money(d.pot, g.currency)],
-    ['Members', `${g.memberCount} of ${g.memberCap}`],
-    ['Cycle', cycleLabel],
-    ['Next due', nextDue || '—'],
-    ['Paid out to', recipient ? recipient.name : '—'],
-  ]) stats.append(el('div', { className: 'stat' }, el('b', {}, value), el('span', {}, label)));
+  const seats = open ? g.memberCap : g.dueDates.length;
+  const current = !open && !g.complete ? g.currentCycle : 0;
+  const filled = open ? g.memberCount : g.complete ? seats : g.currentCycle - 1;
 
-  $('#joinbtn').hidden = d.isMember || g.status !== 'OPEN' || g.memberCount >= g.memberCap;
-  $('#startbtn').hidden = !(g.ownerId === user.userId && g.status === 'OPEN' && g.memberCount >= 2);
+  const gring = $('#gring');
+  gring.textContent = '';
+  gring.append(ringSvg({
+    size: 232,
+    seats,
+    current,
+    filled,
+    center: open ? [String(g.memberCount), `of ${g.memberCap} seats`] : [String(Math.min(g.currentCycle, seats)), `of ${seats} cycles`],
+    caption: open ? `${g.memberCount} of ${g.memberCap} seats taken` : `Cycle ${g.currentCycle} of ${seats}`,
+  }));
+
+  const facts = $('#facts');
+  facts.textContent = '';
+  facts.append(el('div', { className: 'fact' },
+    el('div', { className: 'pot-figure' }, money(d.pot, g.currency)),
+    el('span', {}, d.converted ? `in the pot each cycle, about ${money(d.converted.amount, d.converted.currency)}` : 'in the pot each cycle')));
+  for (const [value, label] of [
+    [`${g.memberCount} of ${g.memberCap}`, 'members'],
+    [open ? 'Not started' : g.complete ? 'Complete' : `${g.currentCycle} of ${g.dueDates.length}`, 'cycle'],
+    [nextDue || 'Not scheduled', 'next payment due'],
+    [recipient ? recipient.name : 'Nobody yet', 'takes this pot'],
+  ]) facts.append(el('div', { className: 'fact' }, el('b', {}, value), el('span', {}, label)));
+
+  $('#joinbtn').hidden = d.isMember || !open || g.memberCount >= g.memberCap;
+  $('#startbtn').hidden = !(g.ownerId === user.userId && open && g.memberCount >= 2);
 
   const tbody = $('#members');
   tbody.textContent = '';
   for (const m of d.members) {
     tbody.append(el('tr', {},
-      el('td', {}, m.payoutPosition ? String(m.payoutPosition) : '—'),
+      el('td', { className: 'seatno' }, m.payoutPosition ? String(m.payoutPosition) : '—'),
       el('td', {}, m.name + (m.userId === g.ownerId ? ' (organiser)' : '')),
       el('td', {}, scoreCell(m.reliability)),
-      el('td', { className: 'muted' }, `${m.onTimeCount} on time of ${m.contribCount}`),
+      el('td', { className: 'muted' }, `${m.onTimeCount} of ${m.contribCount}`),
       el('td', {}, m.payoutPosition && g.dueDates.length ? day(g.dueDates[m.payoutPosition - 1]) : '—')));
   }
 
@@ -209,14 +327,14 @@ function renderLedger(d) {
   }
   for (const c of sorted) {
     rows.append(el('tr', {},
-      el('td', {}, String(c.cycle)),
+      el('td', { className: 'seatno' }, String(c.cycle)),
       el('td', {}, c.userName),
       el('td', {}, money(c.amount, c.currency)),
       el('td', { className: 'muted' }, c.dueDate),
       el('td', { className: 'muted' }, day(c.paidAt)),
-      el('td', {}, el('span', { className: `pill ${c.onTime ? 'ok' : 'late'}` }, c.onTime ? 'on time' : 'late')),
+      el('td', {}, el('span', { className: `tag ${c.onTime ? '' : 'late'}`.trim() }, c.onTime ? 'On time' : 'Late')),
       el('td', {}, c.evidenceKey && window.CONFIG.cdnDomain
-        ? el('a', { href: `https://${window.CONFIG.cdnDomain}/${c.evidenceKey}`, target: '_blank', rel: 'noopener' }, 'view')
+        ? el('a', { href: `https://${window.CONFIG.cdnDomain}/${c.evidenceKey}`, target: '_blank', rel: 'noopener' }, 'View')
         : '—')));
   }
 }
@@ -236,7 +354,7 @@ function setupPayForm(id, d) {
   g.dueDates.forEach((due, i) => {
     const cycle = i + 1;
     if (myPaidCycles.has(cycle)) return;
-    picker.append(el('option', { value: String(cycle) }, `Cycle ${cycle} — due ${due}`));
+    picker.append(el('option', { value: String(cycle) }, `Cycle ${cycle}, due ${due}`));
   });
   if (!picker.options.length) {
     form.hidden = true;
@@ -259,18 +377,18 @@ function setupPayForm(id, d) {
       const file = form.evidence.files[0];
       if (file) {
         // Presigned PUT: the image goes browser -> S3 directly, never through Lambda.
-        status.textContent = 'uploading evidence…';
+        status.textContent = 'Uploading evidence…';
         const { uploadUrl, key } = await api('/uploads/presign', { method: 'POST', body: { contentType: file.type, groupId: id } });
         const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
         if (!put.ok) throw new Error('evidence upload failed');
         evidenceKey = key;
       }
-      status.textContent = 'saving…';
+      status.textContent = 'Saving…';
       const out = await api(`/groups/${id}/contributions`, {
         method: 'POST',
         body: { cycle: Number(picker.value), amount: g.contributionAmount, evidenceKey },
       });
-      status.textContent = out.onTime ? 'logged, on time' : `logged, late (due ${out.dueDate})`;
+      status.textContent = out.onTime ? 'Logged, on time.' : `Logged late, it was due ${out.dueDate}.`;
       setTimeout(() => location.reload(), 900);
     } catch (e2) {
       err.textContent = e2.message;
@@ -286,7 +404,7 @@ async function loadReport(id) {
   const rows = $('#reportrows');
   chart.textContent = '';
   rows.textContent = '';
-  rows.append(el('tr', {}, el('td', { colSpan: 4, className: 'muted' }, 'Running query…')));
+  rows.append(el('tr', {}, el('td', { colSpan: 4, className: 'muted' }, 'Running the query…')));
 
   let d;
   try {
@@ -297,22 +415,26 @@ async function loadReport(id) {
     return;
   }
 
-  $('#reportsource').textContent = d.source === 'athena' ? 'Athena over Glue catalog' : 'live DynamoDB rollup';
+  const source = $('#reportsource');
+  source.textContent = d.source === 'athena' ? 'Athena over the Glue catalog' : 'Live DynamoDB rollup';
+  source.className = `tag small ${d.source === 'athena' ? '' : 'wait'}`.trim();
   $('#reportnote').hidden = !d.note;
   if (d.note) $('#reportnote').textContent = d.note;
 
-  // Bar height is the on-time rate, not the payment count: every cycle collects
-  // the same number of payments, so counts would draw a flat, meaningless chart.
+  // Every cycle collects the same number of payments, so bar height by count would
+  // draw identical rectangles. Each column is a full cycle instead, split into the
+  // share paid on time and the share paid late.
   const cycles = d.byCycle || [];
   for (const c of cycles) {
     const paid = Number(c.paid);
     const onTime = Number(c.on_time);
     const pct = paid ? (onTime / paid) * 100 : 0;
     chart.append(el('div', { className: 'col' },
-      el('b', {}, `${Math.round(pct)}%`),
-      el('i', { style: `height:${Math.max(2, pct)}%`, title: `${onTime} of ${paid} paid on time` }),
-      el('small', {}, `cycle ${c.cycle}`),
-      el('small', {}, `${onTime}/${paid}`)));
+      el('span', { className: 'pct' }, `${Math.round(pct)}%`),
+      el('div', { className: 'bar', title: `${onTime} of ${paid} paid on time` },
+        el('i', { className: 'lateseg', style: `flex:${100 - pct} 1 0` }),
+        el('i', { className: 'on', style: `flex:${pct} 1 0` })),
+      el('span', { className: 'cyc' }, `Cycle ${c.cycle}`)));
   }
   if (!cycles.length) chart.append(el('p', { className: 'muted' }, 'No contributions logged yet.'));
 
