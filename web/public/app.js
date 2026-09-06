@@ -26,11 +26,22 @@ const token = {
 };
 
 async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(API + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(token.get() ? { Authorization: `Bearer ${token.get()}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  // Without a deadline a dropped connection leaves the page on "Loading..."
+  // forever with nothing to tell the user why. Real calls answer in well under a
+  // second, so 15s only ever fires on a genuine stall.
+  let res;
+  try {
+    res = await fetch(API + path, {
+      method,
+      signal: AbortSignal.timeout(15000),
+      headers: { 'Content-Type': 'application/json', ...(token.get() ? { Authorization: `Bearer ${token.get()}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    throw new Error(e.name === 'TimeoutError'
+      ? 'The server did not answer in time. Check your connection and reload.'
+      : 'Could not reach the server. Check your connection and reload.');
+  }
   const data = await res.json().catch(() => ({ error: `${res.status} ${res.statusText}` }));
   if (res.status === 401) { token.clear(); location.href = '/'; }
   if (!res.ok) throw new Error(data.error || 'request failed');
@@ -147,9 +158,24 @@ function initHero() {
   }, 700);
 }
 
+// Only ever holds a same-origin /group/ path this script wrote itself, so it
+// cannot be turned into an open redirect by a crafted link.
+const INVITE_KEY = 'hui.invite';
+function takeInvite() {
+  const next = sessionStorage.getItem(INVITE_KEY);
+  sessionStorage.removeItem(INVITE_KEY);
+  return next && next.startsWith('/group/') ? next : '/dashboard';
+}
+
 function initSignIn() {
   if (token.get()) { location.href = '/dashboard'; return; }
   initHero();
+
+  // Tell an invited friend what they are signing in for.
+  if (sessionStorage.getItem(INVITE_KEY)) {
+    const note = $('#invitenote');
+    if (note) note.hidden = false;
+  }
 
   let mode = 'signin';
   const form = $('#authform');
@@ -174,7 +200,7 @@ function initSignIn() {
     try {
       const out = await api(mode === 'register' ? '/auth/register' : '/auth/login', { method: 'POST', body: payload });
       token.set(out.token);
-      location.href = '/dashboard';
+      location.href = takeInvite();
     } catch (e2) {
       err.textContent = e2.message;
       err.hidden = false;
@@ -243,18 +269,28 @@ async function initDashboard(user) {
 
 // --------------------------------------------------------------- group page
 async function initGroup(user) {
-  if (!user) { location.href = '/'; return; }
+  // An invite link is the one page strangers arrive at signed out. Remember it
+  // so signing in returns them to the circle instead of a bare dashboard.
+  if (!user) { sessionStorage.setItem(INVITE_KEY, location.pathname); location.href = '/'; return; }
   const id = window.GROUP_ID;
 
+  const TAB_KEY = `hui.tab.${id}`;
+  const selectTab = (name) => {
+    document.querySelectorAll('.tab[data-panel]').forEach((t) => t.classList.toggle('active', t.dataset.panel === name));
+    document.querySelectorAll('.panel[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+    if (name === 'report') loadReport(id);
+  };
+
   document.querySelectorAll('.tab[data-panel]').forEach((tab) => {
-    tab.onclick = () => {
-      document.querySelectorAll('.tab[data-panel]').forEach((t) => t.classList.toggle('active', t === tab));
-      document.querySelectorAll('.panel[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== tab.dataset.panel; });
-      if (tab.dataset.panel === 'report') loadReport(id);
-    };
+    tab.onclick = () => { sessionStorage.setItem(TAB_KEY, tab.dataset.panel); selectTab(tab.dataset.panel); };
   });
 
   await render(id, user);
+
+  // Joining, starting and logging a payment all reload the page. Without this the
+  // user is thrown back to Members and loses sight of the row they just created.
+  const savedTab = sessionStorage.getItem(TAB_KEY);
+  if (savedTab) selectTab(savedTab);
 
   $('#joinbtn').onclick = async () => { await api(`/groups/${id}/join`, { method: 'POST' }); location.reload(); };
   $('#startbtn').onclick = async () => { await api(`/groups/${id}/start`, { method: 'POST' }); location.reload(); };
@@ -312,12 +348,15 @@ async function render(id, user) {
   // Demo clock. Only the organiser sees it, only while DEMO_MODE is on, and the
   // label says what the next press will do rather than making you guess.
   const clock = $('#democlock');
-  const canDemo = d.demo && g.ownerId === user.userId && g.status === 'ACTIVE' && !g.complete;
+  const canDemo = d.demo && g.ownerId === user.userId && g.status === 'ACTIVE' && g.dueDates.length > 0;
   clock.hidden = !canDemo;
   if (canDemo) {
     const today = new Date().toISOString().slice(0, 10);
     const due = g.dueDates[g.currentCycle - 1];
-    clock.textContent = due > today ? 'Test: jump to due date' : 'Test: push past due date';
+    // Past the final due date the circle reads complete; offer a reset rather
+    // than hiding the control and stranding the demo with no way back.
+    clock.textContent = g.complete ? 'Test: reset the clock'
+      : due > today ? 'Test: jump to due date' : 'Test: push past due date';
   }
 
   const tbody = $('#members');
@@ -393,7 +432,10 @@ function renderLedger(d) {
 function setupPayForm(id, d) {
   const form = $('#payform');
   const g = d.group;
-  form.hidden = !(d.isMember && g.status === 'ACTIVE' && !g.complete);
+  // Not gated on g.complete: once the last due date passes, an unpaid member
+  // must still be able to record what they owe. The empty-picker check below
+  // already hides the form when there is genuinely nothing left to pay.
+  form.hidden = !(d.isMember && g.status === 'ACTIVE');
   if (form.hidden) return;
 
   // Only offer cycles this member has not already paid; the API rejects a repeat
@@ -430,8 +472,16 @@ function setupPayForm(id, d) {
         // Presigned PUT: the image goes browser -> S3 directly, never through Lambda.
         status.textContent = 'Uploading evidence…';
         const { uploadUrl, key } = await api('/uploads/presign', { method: 'POST', body: { contentType: file.type, groupId: id } });
-        const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
-        if (!put.ok) throw new Error('evidence upload failed');
+        // fetch only rejects on a network-level failure, and the browser's message
+        // for that is the opaque "Failed to fetch". Say something the user can act
+        // on - the file is still attached, so pressing the button again retries.
+        let put;
+        try {
+          put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+        } catch {
+          throw new Error('Could not reach S3 to upload the evidence. Check your connection and press Log contribution again - your file is still attached.');
+        }
+        if (!put.ok) throw new Error(`evidence upload failed (S3 returned ${put.status})`);
         evidenceKey = key;
       }
       status.textContent = 'Saving…';
@@ -501,10 +551,17 @@ async function loadReport(id) {
 
 // --------------------------------------------------------------------- boot
 (async () => {
-  const user = await mountNav();
-  window.ME = user || {};
-  const path = location.pathname;
-  if (path === '/') initSignIn();
-  else if (path === '/dashboard') initDashboard(user);
-  else if (path.startsWith('/group/')) initGroup(user);
+  try {
+    const user = await mountNav();
+    window.ME = user || {};
+    const path = location.pathname;
+    if (path === '/') initSignIn();
+    else if (path === '/dashboard') await initDashboard(user);
+    else if (path.startsWith('/group/')) await initGroup(user);
+  } catch (e) {
+    // A failed boot would otherwise leave the placeholder "Loading..." on screen
+    // with no clue what went wrong. Put the reason where the placeholder was.
+    const slot = $('#gname') || $('#scoreline');
+    if (slot) { slot.textContent = e.message; slot.classList.add('error'); }
+  }
 })();

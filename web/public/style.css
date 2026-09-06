@@ -104,8 +104,16 @@ main    { flex: 1; width: 100%; }
 .band .wrap { display: grid; grid-template-columns: 300px 1fr; gap: 56px; align-items: center; }
 .band p { color: var(--on-dark-soft); }
 .ringside { display: flex; flex-direction: column; align-items: center; gap: 14px; }
-.ringcap { font-size: 13px; color: var(--on-dark-soft); text-align: center; min-height: 2.6em; max-width: 26ch; }
+/* min-height fits the LONGEST caption (the closing 'everyone has been paid exactly
+   once' line wraps to three). The caption is rewritten every 620ms and sits above
+   the sign-in form, so a box that grows mid-animation shifts the form down under
+   the user's cursor. */
+.ringcap { font-size: 13px; color: var(--on-dark-soft); text-align: center; min-height: 3.9em; max-width: 26ch; }
 .ringcap b { color: var(--marigold); font-weight: 600; }
+.invitenote {
+  font-size: 13px; line-height: 1.5; margin: 0 0 18px; padding: 10px 12px;
+  border-left: 2px solid var(--marigold); background: #fdf6e7; color: #6b4e0c;
+}
 .lede {
   font: 700 44px/1.1 var(--serif); letter-spacing: -0.02em;
   color: var(--on-dark); margin: 0 0 20px; max-width: 15ch;
@@ -132,6 +140,10 @@ main    { flex: 1; width: 100%; }
 .testbtn {
   border: 1px dashed var(--marigold); background: #fdf6e7; color: #8a6410;
   border-radius: 999px; padding: 9px 18px; font-size: 13px; font-weight: 600;
+  /* The label toggles between "jump to due date" (182px) and "push past due
+     date" (196px). In a flex row that 14px swing changes where the button wraps
+     and shoves the figures below it down, so pin a width both labels fit. */
+  min-width: 200px;
 }
 .testbtn:hover { background: #faedd0; }
 

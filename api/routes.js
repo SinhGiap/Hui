@@ -128,10 +128,18 @@ async function createGroup({ body, user }) {
   return { group };
 }
 
+// currentCycle and complete are derived, never stored, so the list and the detail
+// view have to derive them the same way - a finished circle that reads "Everyone
+// has been paid" on its own page must not read "Cycle 3 of 2" in the list.
+function withProgress(g) {
+  const cycle = g.dueDates.length ? currentCycle(g.dueDates) : 0;
+  return { ...g, currentCycle: cycle, complete: g.dueDates.length > 0 && cycle > g.dueDates.length };
+}
+
 async function myGroups({ user }) {
   const mirrors = await db.query(`USER#${user.sub}`, 'GROUP#');
   const groups = await Promise.all(mirrors.map((m) => loadGroup(m.groupId)));
-  return { groups: groups.map((g) => ({ ...g, currentCycle: g.dueDates.length ? currentCycle(g.dueDates) : 0 })) };
+  return { groups: groups.map(withProgress) };
 }
 
 async function groupDetail({ params, query, user }) {
@@ -154,11 +162,10 @@ async function groupDetail({ params, query, user }) {
       : CDN_DOMAIN ? `https://${CDN_DOMAIN}/${c.evidenceKey}`
         : await getSignedUrl(s3, new GetObjectCommand({ Bucket: EVIDENCE_BUCKET, Key: c.evidenceKey }), { expiresIn: 3600 }),
   })));
-  const cycle = group.dueDates.length ? currentCycle(group.dueDates) : 0;
   const converted = await convert(group.contributionAmount, group.currency, (query.display || '').toUpperCase()).catch(() => null);
 
   return {
-    group: { ...group, currentCycle: cycle, complete: group.dueDates.length > 0 && cycle > group.dueDates.length },
+    group: withProgress(group),
     demo: DEMO_MODE,
     isMember: members.some((m) => m.userId === user.sub),
     members: members.sort((a, b) => (a.payoutPosition || 99) - (b.payoutPosition || 99)),
@@ -297,14 +304,20 @@ async function demoAdvance({ params, user }) {
   if (group.status !== 'ACTIVE') throw new HttpError(409, 'start the rotation first');
 
   const today = new Date().toISOString().slice(0, 10);
+  if (!group.dueDates.length) throw new HttpError(409, 'start the rotation first');
   const cycle = currentCycle(group.dueDates);
-  if (cycle > group.dueDates.length) throw new HttpError(409, 'every cycle is already past its due date');
+  const last = group.dueDates[group.dueDates.length - 1];
 
-  const due = group.dueDates[cycle - 1];
-  // Future deadline: land it exactly on today. Already today or behind: push it
-  // further back so the next payment is unambiguously late.
-  const shift = due > today ? daysApart(due, today) : 3;
-  const dueDates = group.dueDates.map((d) => shiftDay(d, -shift));
+  // Signed days to add to every due date:
+  //   past the end  -> forward, so the final cycle is due today again. Without
+  //                    this the circle reads complete, the control disappears and
+  //                    the demo is stranded with no way back.
+  //   future deadline-> back onto today, so paying now scores on time.
+  //   today or behind-> back three more days, so paying now scores late.
+  const delta = cycle > group.dueDates.length ? daysApart(today, last)
+    : group.dueDates[cycle - 1] > today ? -daysApart(group.dueDates[cycle - 1], today)
+      : -3;
+  const dueDates = group.dueDates.map((d) => shiftDay(d, delta));
 
   await db.update({
     Key: { PK: `GROUP#${params.id}`, SK: 'META' },
@@ -314,7 +327,7 @@ async function demoAdvance({ params, user }) {
 
   return {
     dueDates,
-    movedBackDays: shift,
+    movedBackDays: -delta,
     currentCycle: currentCycle(dueDates),
     // The demo operator's actual question: did that press put a deadline behind
     // us, so the next payment against it scores late?
