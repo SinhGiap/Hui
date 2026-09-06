@@ -21,6 +21,7 @@ app.use((req, res, next) => { res.locals.config = config; next(); });
 
 app.get('/', (req, res) => res.render('signin'));
 app.get('/dashboard', (req, res) => res.render('dashboard'));
+app.get('/profile', (req, res) => res.render('profile'));
 app.get('/group/:id', (req, res) => res.render('group', { groupId: req.params.id }));
 
 // Beanstalk's load balancer health check hits '/', but an explicit endpoint makes

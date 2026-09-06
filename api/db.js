@@ -6,10 +6,11 @@
 //   GROUP#<id> | MEMBER#<userId>    -> membership + payout position
 //   USER#<id>  | GROUP#<groupId>    -> mirror row, powers "my groups"
 //   GROUP#<id> | CONTRIB#<cycle>#<userId> -> the ledger
+//   RESET#<tokenHash> | TOKEN -> single-use password reset, checked against expiresAt
 // ponytail: mirror rows instead of a GSI. Two writes beats an index to provision,
 // backfill and pay for. Add a GSI when a query appears that mirroring cannot serve.
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, TransactWriteCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand, TransactWriteCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
 const TABLE = process.env.TABLE_NAME || 'rosca';
 
@@ -26,6 +27,7 @@ const doc = DynamoDBDocumentClient.from(client, { marshallOptions: { removeUndef
 const get = async (PK, SK) => (await doc.send(new GetCommand({ TableName: TABLE, Key: { PK, SK } }))).Item || null;
 const put = (Item, ConditionExpression) => doc.send(new PutCommand({ TableName: TABLE, Item, ConditionExpression }));
 const update = (params) => doc.send(new UpdateCommand({ TableName: TABLE, ...params }));
+const del = (PK, SK) => doc.send(new DeleteCommand({ TableName: TABLE, Key: { PK, SK } }));
 const transact = (TransactItems) => doc.send(new TransactWriteCommand({ TransactItems }));
 
 async function query(PK, skPrefix) {
@@ -56,4 +58,4 @@ async function scanAll(skPrefix) {
   return items;
 }
 
-module.exports = { TABLE, doc, get, put, update, query, transact, scanAll };
+module.exports = { TABLE, doc, get, put, update, del, query, transact, scanAll };

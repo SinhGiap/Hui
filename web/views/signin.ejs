@@ -27,6 +27,7 @@
         <button class="tab active" data-mode="signin" type="button">Sign in</button>
         <button class="tab" data-mode="register" type="button">Create account</button>
       </div>
+      <p class="invitenote" id="resetnote" hidden>Enter the email you signed up with and the new password you want. You will be signed in straight away.</p>
       <p class="invitenote" id="invitenote" hidden>You have been invited to a circle. Sign in or create an account and we will take you straight to it.</p>
       <form id="authform">
         <label class="field reg-only" hidden>
@@ -38,12 +39,13 @@
           <input name="email" type="email" autocomplete="email" required maxlength="120">
         </label>
         <label class="field">
-          <span>Password</span>
+          <span id="pwlabel">Password</span>
           <input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200">
-          <small class="hint reg-only" hidden>At least 8 characters.</small>
+          <small class="hint" id="pwhint" hidden>At least 8 characters, with an uppercase letter, a lowercase letter and a digit.</small>
         </label>
         <button class="primary" type="submit">Sign in</button>
         <p class="error" id="autherror" role="alert" hidden></p>
+        <button class="link" id="forgotlink" type="button">Forgot your password?</button>
       </form>
     </div>
 

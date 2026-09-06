@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const db = require('./db');
-const { hashPassword, verifyPassword, sign, readToken } = require('./auth');
+const { hashPassword, verifyPassword, sign, readToken, passwordProblem, signRecord, recordIntact } = require('./auth');
 const { reliability, cycleDueDates, shuffle, currentCycle, isOnTime } = require('./core');
 const { publicHolidays, convert } = require('./external');
 const { runReport, liveReport } = require('./analytics');
@@ -40,6 +40,9 @@ const profileKey = (userId) => [`USER#${userId}`, 'PROFILE'];
 async function loadProfile(userId) {
   const p = await db.get(...profileKey(userId));
   if (!p) throw new HttpError(404, 'user not found');
+  // An account row edited straight in the DynamoDB console no longer matches its
+  // signature, so the app refuses to act on it rather than trusting the change.
+  if (!recordIntact(p)) throw new HttpError(409, 'this account record has been modified outside the application');
   return p;
 }
 const publicUser = (p) => ({
@@ -68,11 +71,14 @@ async function register({ body }) {
   const email = str(body, 'email', { max: 120 }).toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) bad('email is not valid');
   const name = str(body, 'name', { max: 80 });
-  const password = str(body, 'password', { min: 8, max: 200 });
+  const password = str(body, 'password', { min: 1, max: 200 });
+  const weak = passwordProblem(password);
+  if (weak) bad(weak);
 
   const userId = id();
   const now = new Date().toISOString();
   const user = { PK: `USER#${userId}`, SK: 'PROFILE', userId, email, name, passwordHash: hashPassword(password), onTimeCount: 0, contribCount: 0, createdAt: now };
+  user.sig = signRecord(user);
 
   try {
     // Both rows land or neither does, so an email can never map to a half-made user.
@@ -95,10 +101,65 @@ async function login({ body }) {
   // enumerate which emails are registered.
   const profile = lookup && (await db.get(...profileKey(lookup.userId)));
   if (!profile || !verifyPassword(password, profile.passwordHash)) throw new HttpError(401, 'email or password is incorrect');
+  // Check the signature here too, not just in loadProfile. Otherwise swapping a
+  // passwordHash straight into the table would still mint a valid session, which
+  // is precisely the attack the signature exists to stop.
+  if (!recordIntact(profile)) throw new HttpError(409, 'this account record has been modified outside the application');
   return { token: sign(profile), user: publicUser(profile) };
 }
 
 const me = async ({ user }) => ({ user: publicUser(await loadProfile(user.sub)) });
+
+// Every account write re-signs the row, so a legitimate change keeps the record
+// verifiable while a console edit does not.
+const reSign = (next, UpdateExpression, ExpressionAttributeValues, ExpressionAttributeNames) => db.update({
+  Key: { PK: `USER#${next.userId}`, SK: 'PROFILE' },
+  UpdateExpression,
+  ExpressionAttributeValues: { ...ExpressionAttributeValues, ':s': signRecord(next) },
+  ...(ExpressionAttributeNames ? { ExpressionAttributeNames } : {}),
+});
+
+async function updateProfile({ body, user }) {
+  const name = str(body, 'name', { max: 80 });
+  const profile = await loadProfile(user.sub);
+  const next = { ...profile, name };
+  await reSign(next, 'SET #n = :n, sig = :s', { ':n': name }, { '#n': 'name' });
+  // The JWT carries the display name, so hand back a fresh one rather than
+  // leaving the nav showing the old name until the token expires.
+  return { user: publicUser(next), token: sign(next) };
+}
+
+async function changePassword({ body, user }) {
+  const currentPassword = str(body, 'currentPassword', { min: 1, max: 200 });
+  const newPassword = str(body, 'newPassword', { min: 1, max: 200 });
+  const profile = await loadProfile(user.sub);
+  if (!verifyPassword(currentPassword, profile.passwordHash)) throw new HttpError(403, 'your current password is not correct');
+  const weak = passwordProblem(newPassword);
+  if (weak) bad(weak);
+  if (verifyPassword(newPassword, profile.passwordHash)) bad('the new password must be different from the current one');
+
+  const next = { ...profile, passwordHash: hashPassword(newPassword) };
+  await reSign(next, 'SET passwordHash = :p, sig = :s', { ':p': next.passwordHash });
+  return { changed: true };
+}
+
+// ponytail: no emailed token. SES earns no marks here and cannot reach the
+// @example.com demo accounts from the sandbox, and the reset was accepted without
+// verification - so anyone who knows a registered address can set its password.
+// That is a demo affordance, not a production reset.
+async function resetPassword({ body }) {
+  const email = str(body, 'email', { max: 120 }).toLowerCase();
+  const password = str(body, 'password', { min: 1, max: 200 });
+  const weak = passwordProblem(password);
+  if (weak) bad(weak);
+
+  const lookup = await db.get(`EMAIL#${email}`, 'USER');
+  if (!lookup) throw new HttpError(404, 'no account uses that email address');
+  const profile = await loadProfile(lookup.userId);
+  const next = { ...profile, passwordHash: hashPassword(password) };
+  await reSign(next, 'SET passwordHash = :p, sig = :s', { ':p': next.passwordHash });
+  return { token: sign(next), user: publicUser(next) };
+}
 
 async function createGroup({ body, user }) {
   const name = str(body, 'name', { max: 80 });
@@ -373,6 +434,9 @@ const table = [
   ['POST', '/auth/register', register, true],
   ['POST', '/auth/login', login, true],
   ['GET', '/me', me, false],
+  ['POST', '/me', updateProfile, false],
+  ['POST', '/me/password', changePassword, false],
+  ['POST', '/auth/reset', resetPassword, true],
   ['GET', '/groups', myGroups, false],
   ['POST', '/groups', createGroup, false],
   ['GET', '/groups/:id', groupDetail, false],

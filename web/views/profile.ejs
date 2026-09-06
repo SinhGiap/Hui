@@ -1,0 +1,44 @@
+<%- include('header', { title: 'Your profile — Hụi' }) %>
+
+<section class="section">
+  <div class="wrap stack narrow">
+    <div>
+      <h1>Your profile</h1>
+      <p class="sub" id="profilesub">Loading…</p>
+    </div>
+
+    <form class="panel form" id="nameform">
+      <h2>Your details</h2>
+      <label class="field">
+        <span>Full name</span>
+        <input name="name" type="text" autocomplete="name" required maxlength="80">
+      </label>
+      <label class="field">
+        <span>Email</span>
+        <input name="email" type="email" disabled>
+        <small class="hint">Your email is how the circle finds you, so it cannot be changed here.</small>
+      </label>
+      <button class="primary" type="submit">Save name</button>
+      <p class="ok" id="nameok" role="status" hidden></p>
+      <p class="error" id="nameerror" role="alert" hidden></p>
+    </form>
+
+    <form class="panel form" id="passwordform">
+      <h2>Change password</h2>
+      <label class="field">
+        <span>Current password</span>
+        <input name="currentPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <label class="field">
+        <span>New password</span>
+        <input name="newPassword" type="password" autocomplete="new-password" required minlength="8" maxlength="200">
+        <small class="hint">At least 8 characters, with an uppercase letter, a lowercase letter and a digit.</small>
+      </label>
+      <button class="primary" type="submit">Change password</button>
+      <p class="ok" id="passwordok" role="status" hidden></p>
+      <p class="error" id="passworderror" role="alert" hidden></p>
+    </form>
+  </div>
+</section>
+
+<%- include('footer') %>

@@ -64,7 +64,8 @@ main    { flex: 1; width: 100%; }
 .brand { display: flex; align-items: center; gap: 9px; color: var(--on-dark); text-decoration: none; font: 700 20px/1 var(--serif); }
 .brand svg { display: block; }
 .topbar nav { display: flex; align-items: center; gap: 16px; }
-.who { color: var(--on-dark-soft); font-size: 13px; }
+.who { color: var(--on-dark-soft); font-size: 13px; text-decoration: none; }
+.who:hover { color: var(--on-dark); text-decoration: underline; }
 .foot {
   display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
   padding: 16px 26px; border-top: 1px solid var(--oat-line);
@@ -182,6 +183,8 @@ button { font: inherit; cursor: pointer; }
 .link-dark { background: none; border: none; color: var(--on-dark); text-decoration: underline; padding: 4px; font-size: 13px; }
 
 .error { color: var(--magenta); font-size: 13px; margin: 8px 0 0; }
+.ok { color: var(--indigo-700); font-size: 13px; margin: 8px 0 0; }
+.narrow { max-width: 620px; }
 .note { border-left: 3px solid var(--marigold); background: #faf3e3; padding: 10px 14px; font-size: 13px; margin-bottom: 18px; }
 
 /* ---------- tabs ---------- */

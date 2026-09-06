@@ -97,15 +97,11 @@ function ringSvg({ size = 232, seats, current = 0, filled = 0, center, caption }
 async function mountNav() {
   $('#apihint').textContent = new URL(API).host;
   if (!token.get()) return null;
-  try {
-    const { user } = await api('/me');
-    $('#who').textContent = `${user.name}, reliability ${user.reliability}`;
-    $('#nav').hidden = false;
-    $('#signout').onclick = () => { token.clear(); location.href = '/'; };
-    return user;
-  } catch {
-    return null;
-  }
+  const { user } = await api('/me');
+  $('#who').textContent = `${user.name}, reliability ${user.reliability}`;
+  $('#nav').hidden = false;
+  $('#signout').onclick = () => { token.clear(); location.href = '/'; };
+  return user;
 }
 
 // ------------------------------------------------------------------ sign in
@@ -177,20 +173,34 @@ function initSignIn() {
     if (note) note.hidden = false;
   }
 
-  let mode = 'signin';
   const form = $('#authform');
   const err = $('#autherror');
+  let mode = 'signin';
 
-  document.querySelectorAll('.tab[data-mode]').forEach((tab) => {
-    tab.onclick = () => {
-      mode = tab.dataset.mode;
-      document.querySelectorAll('.tab[data-mode]').forEach((t) => t.classList.toggle('active', t === tab));
-      document.querySelectorAll('.reg-only').forEach((n) => { n.hidden = mode !== 'register'; });
-      form.name.required = mode === 'register';
-      form.querySelector('.primary').textContent = mode === 'register' ? 'Create account' : 'Sign in';
-      err.hidden = true;
-    };
-  });
+  const MODES = {
+    signin: { button: 'Sign in', password: 'Password', route: '/auth/login' },
+    register: { button: 'Create account', password: 'Password', route: '/auth/register' },
+    reset: { button: 'Set new password', password: 'New password', route: '/auth/reset' },
+  };
+
+  function setMode(next) {
+    mode = next;
+    const m = MODES[mode];
+    document.querySelectorAll('.tab[data-mode]').forEach((t) => t.classList.toggle('active', t.dataset.mode === mode));
+    document.querySelectorAll('.reg-only').forEach((n) => { n.hidden = mode !== 'register'; });
+    $('#pwlabel').textContent = m.password;
+    $('#pwhint').hidden = mode === 'signin';
+    $('#forgotlink').hidden = mode !== 'signin';
+    $('#resetnote').hidden = mode !== 'reset';
+    form.name.required = mode === 'register';
+    form.password.autocomplete = mode === 'signin' ? 'current-password' : 'new-password';
+    form.querySelector('.primary').textContent = m.button;
+    err.hidden = true;
+  }
+
+  document.querySelectorAll('.tab[data-mode]').forEach((tab) => { tab.onclick = () => setMode(tab.dataset.mode); });
+  $('#forgotlink').onclick = () => setMode('reset');
+  setMode('signin');
 
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -198,7 +208,7 @@ function initSignIn() {
     const payload = { email: form.email.value, password: form.password.value };
     if (mode === 'register') payload.name = form.name.value;
     try {
-      const out = await api(mode === 'register' ? '/auth/register' : '/auth/login', { method: 'POST', body: payload });
+      const out = await api(MODES[mode].route, { method: 'POST', body: payload });
       token.set(out.token);
       location.href = takeInvite();
     } catch (e2) {
@@ -206,6 +216,57 @@ function initSignIn() {
       err.hidden = false;
     }
   };
+}
+
+// ------------------------------------------------------------------ profile
+function initProfile(user) {
+  if (!user) { location.href = '/'; return; }
+  const payments = user.contribCount === 1 ? 'payment' : 'payments';
+  $('#profilesub').textContent = `Your reliability score is ${user.reliability}, from ${user.onTimeCount} on-time ${payments} out of ${user.contribCount}.`;
+
+  const nameForm = $('#nameform');
+  nameForm.name.value = user.name;
+  nameForm.email.value = user.email;
+
+  // Both forms behave identically around the edges, so they share one wrapper:
+  // clear the banners, disable the button, put whatever comes back where it goes.
+  const wire = (form, ok, err, send, done) => {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      ok.hidden = true;
+      err.hidden = true;
+      const button = form.querySelector('.primary');
+      button.disabled = true;
+      try {
+        done(await send(), ok);
+      } catch (e2) {
+        err.textContent = e2.message;
+        err.hidden = false;
+      } finally {
+        button.disabled = false;
+      }
+    };
+  };
+
+  wire(nameForm, $('#nameok'), $('#nameerror'),
+    () => api('/me', { method: 'POST', body: { name: nameForm.name.value } }),
+    (out, ok) => {
+      // The display name is baked into the token, so take the reissued one or the
+      // nav keeps showing the old name until this session expires.
+      token.set(out.token);
+      $('#who').textContent = `${out.user.name}, reliability ${out.user.reliability}`;
+      ok.textContent = 'Name saved.';
+      ok.hidden = false;
+    });
+
+  const pwForm = $('#passwordform');
+  wire(pwForm, $('#passwordok'), $('#passworderror'),
+    () => api('/me/password', { method: 'POST', body: { currentPassword: pwForm.currentPassword.value, newPassword: pwForm.newPassword.value } }),
+    (_out, ok) => {
+      pwForm.reset();
+      ok.textContent = 'Password changed.';
+      ok.hidden = false;
+    });
 }
 
 // ----------------------------------------------------------------- dashboard
@@ -557,6 +618,7 @@ async function loadReport(id) {
     const path = location.pathname;
     if (path === '/') initSignIn();
     else if (path === '/dashboard') await initDashboard(user);
+    else if (path === '/profile') initProfile(user);
     else if (path.startsWith('/group/')) await initGroup(user);
   } catch (e) {
     // A failed boot would otherwise leave the placeholder "Loading..." on screen
