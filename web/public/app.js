@@ -1,7 +1,6 @@
 'use strict';
 // Everything on these pages comes from API Gateway. The Beanstalk tier only ever
 // serves the shell, so the API is the one place business rules live.
-// ponytail: no framework. Three pages of DOM building does not earn a build step.
 
 const API = window.CONFIG.apiBase;
 const $ = (sel) => document.querySelector(sel);
@@ -27,8 +26,7 @@ const token = {
 
 async function api(path, { method = 'GET', body } = {}) {
   // Without a deadline a dropped connection leaves the page on "Loading..."
-  // forever with nothing to tell the user why. Real calls answer in well under a
-  // second, so 15s only ever fires on a genuine stall.
+  // forever. Real calls answer well under a second.
   let res;
   try {
     res = await fetch(API + path, {
@@ -58,11 +56,8 @@ function scoreCell(score) {
 }
 
 // ------------------------------------------------------------------- the ring
-// A rotation is the one thing a paper hui book cannot draw, so it is the hero on
-// every page: seats around a circle, the pot resting on whoever's turn it is.
-// Same function at 300px on the landing page, 232px on a circle, 46px in a row.
-// Seats carry no names — the table underneath maps seat to member, and crowding
-// six diacritic-heavy names into 13px dots would only make both unreadable.
+// Seats around a circle with the pot on whoever's turn it is. Same function at
+// 300px, 232px and 46px; the table underneath maps seat to member.
 function ringSvg({ size = 232, seats, current = 0, filled = 0, center, caption }) {
   const big = size >= 150;
   const seatR = big ? 13 : Math.max(3, size / 13);
@@ -107,9 +102,6 @@ async function mountNav() {
 // ------------------------------------------------------------------ sign in
 const HERO_NAMES = ['Mai', 'Hương', 'Đức', 'Linh', 'Tuấn', 'Bảo'];
 
-// The one piece of motion on the site: the pot travels a single lap on load and
-// then rests. It is here because the mechanic is hard to explain in a sentence
-// and obvious in three seconds of movement.
 function initHero() {
   const host = $('#herochart');
   const cap = $('#herocap');
@@ -167,7 +159,6 @@ function initSignIn() {
   if (token.get()) { location.href = '/dashboard'; return; }
   initHero();
 
-  // Tell an invited friend what they are signing in for.
   if (sessionStorage.getItem(INVITE_KEY)) {
     const note = $('#invitenote');
     if (note) note.hidden = false;
@@ -228,8 +219,7 @@ function initProfile(user) {
   nameForm.name.value = user.name;
   nameForm.email.value = user.email;
 
-  // Both forms behave identically around the edges, so they share one wrapper:
-  // clear the banners, disable the button, put whatever comes back where it goes.
+  // Shared wrapper: clear banners, disable the button, place the result.
   const wire = (form, ok, err, send, done) => {
     form.onsubmit = async (e) => {
       e.preventDefault();
@@ -251,8 +241,7 @@ function initProfile(user) {
   wire(nameForm, $('#nameok'), $('#nameerror'),
     () => api('/me', { method: 'POST', body: { name: nameForm.name.value } }),
     (out, ok) => {
-      // The display name is baked into the token, so take the reissued one or the
-      // nav keeps showing the old name until this session expires.
+      // Name is baked into the token; take the reissued one.
       token.set(out.token);
       $('#who').textContent = `${out.user.name}, reliability ${out.user.reliability}`;
       ok.textContent = 'Name saved.';
@@ -330,8 +319,7 @@ async function initDashboard(user) {
 
 // --------------------------------------------------------------- group page
 async function initGroup(user) {
-  // An invite link is the one page strangers arrive at signed out. Remember it
-  // so signing in returns them to the circle instead of a bare dashboard.
+  // Remember the invite target so signing in returns here, not to the dashboard.
   if (!user) { sessionStorage.setItem(INVITE_KEY, location.pathname); location.href = '/'; return; }
   const id = window.GROUP_ID;
 
@@ -348,8 +336,7 @@ async function initGroup(user) {
 
   await render(id, user);
 
-  // Joining, starting and logging a payment all reload the page. Without this the
-  // user is thrown back to Members and loses sight of the row they just created.
+  // Those actions reload the page; without this the user is thrown back to Members.
   const savedTab = sessionStorage.getItem(TAB_KEY);
   if (savedTab) selectTab(savedTab);
 
@@ -359,8 +346,7 @@ async function initGroup(user) {
 }
 
 async function render(id, user) {
-  // Ask for a USD conversion alongside the group's own currency; the API fetches
-  // it from the third-party exchange-rate service.
+  // USD alongside the group currency, via the third-party exchange-rate API.
   const d = await api(`/groups/${id}?display=USD`);
   const g = d.group;
   const open = g.status === 'OPEN';
@@ -400,22 +386,20 @@ async function render(id, user) {
   $('#joinbtn').hidden = d.isMember || !open || g.memberCount >= g.memberCap;
   $('#startbtn').hidden = !(g.ownerId === user.userId && open && g.memberCount >= 2);
 
-  // Invites are just the circle's own URL: anyone signed in who opens it while
-  // seats remain gets the Join button. No invite tokens, no pending-member state.
+  // Invites are just the circle URL - no tokens, no pending-member state.
   const invite = $('#invitebtn');
   invite.hidden = !(d.isMember && open && g.memberCount < g.memberCap);
   invite.onclick = () => copyLink(invite, 'Copy invite link');
 
-  // Demo clock. Only the organiser sees it, only while DEMO_MODE is on, and the
-  // label says what the next press will do rather than making you guess.
+  // Demo clock: organiser only, DEMO_MODE only. The label says what the next
+  // press will do.
   const clock = $('#democlock');
   const canDemo = d.demo && g.ownerId === user.userId && g.status === 'ACTIVE' && g.dueDates.length > 0;
   clock.hidden = !canDemo;
   if (canDemo) {
     const today = new Date().toISOString().slice(0, 10);
     const due = g.dueDates[g.currentCycle - 1];
-    // Past the final due date the circle reads complete; offer a reset rather
-    // than hiding the control and stranding the demo with no way back.
+    // Past the final due date, offer a reset rather than stranding the demo.
     clock.textContent = g.complete ? 'Test: reset the clock'
       : due > today ? 'Test: jump to due date' : 'Test: push past due date';
   }
@@ -436,9 +420,6 @@ async function render(id, user) {
   setupPayForm(id, d);
 }
 
-// An organiser's real question is "who still owes me for this cycle". The answer
-// is already in the group payload, so it belongs as a column on the table that
-// already lists everyone rather than a separate organiser-only page.
 function thisCycleTag(d, member) {
   const cycle = d.group.currentCycle;
   if (!cycle || cycle > d.group.dueDates.length) return el('span', { className: 'tag wait' }, '—');
@@ -447,10 +428,8 @@ function thisCycleTag(d, member) {
   return el('span', { className: `tag ${paid.onTime ? '' : 'late'}`.trim() }, paid.onTime ? 'On time' : 'Late');
 }
 
-// Beanstalk serves plain http, so navigator.clipboard does not exist here and
-// execCommand('copy') needs a user gesture Chrome no longer grants a script.
-// Revealing the link pre-selected always works; the clipboard is the bonus path
-// for whenever this sits behind https.
+// Plain http, so navigator.clipboard does not exist. Revealing the link
+// pre-selected always works; the clipboard is the bonus path under https.
 async function copyLink(button, label) {
   const url = location.href;
   const field = $('#invitelink');
@@ -482,8 +461,7 @@ function renderLedger(d) {
       el('td', { className: 'muted' }, c.dueDate),
       el('td', { className: 'muted' }, day(c.paidAt)),
       el('td', {}, el('span', { className: `tag ${c.onTime ? '' : 'late'}`.trim() }, c.onTime ? 'On time' : 'Late')),
-      // The API decides how evidence is reachable - CloudFront when it exists,
-      // a presigned GET when it does not - so the page just follows the link.
+      // The API decides how evidence is reachable; the page follows the link.
       el('td', {}, c.evidenceUrl
         ? el('a', { href: c.evidenceUrl, target: '_blank', rel: 'noopener' }, 'View')
         : '—')));
@@ -493,14 +471,12 @@ function renderLedger(d) {
 function setupPayForm(id, d) {
   const form = $('#payform');
   const g = d.group;
-  // Not gated on g.complete: once the last due date passes, an unpaid member
-  // must still be able to record what they owe. The empty-picker check below
-  // already hides the form when there is genuinely nothing left to pay.
+  // Not gated on g.complete: past the last due date an unpaid member must still
+  // be able to record what they owe. The empty-picker check below covers the rest.
   form.hidden = !(d.isMember && g.status === 'ACTIVE');
   if (form.hidden) return;
 
-  // Only offer cycles this member has not already paid; the API rejects a repeat
-  // anyway, but showing an impossible option is a worse experience than hiding it.
+  // Only cycles this member has not paid; the API rejects repeats anyway.
   const myPaidCycles = new Set(d.contributions.filter((c) => c.userId === window.ME.userId).map((c) => c.cycle));
 
   const picker = $('#cyclepick');
@@ -533,9 +509,8 @@ function setupPayForm(id, d) {
         // Presigned PUT: the image goes browser -> S3 directly, never through Lambda.
         status.textContent = 'Uploading evidence…';
         const { uploadUrl, key } = await api('/uploads/presign', { method: 'POST', body: { contentType: file.type, groupId: id } });
-        // fetch only rejects on a network-level failure, and the browser's message
-        // for that is the opaque "Failed to fetch". Say something the user can act
-        // on - the file is still attached, so pressing the button again retries.
+        // fetch only rejects on a network failure, where the browser says the
+        // opaque "Failed to fetch". The file stays attached, so retry works.
         let put;
         try {
           put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
@@ -583,9 +558,7 @@ async function loadReport(id) {
   $('#reportnote').hidden = !d.note;
   if (d.note) $('#reportnote').textContent = d.note;
 
-  // Every cycle collects the same number of payments, so bar height by count would
-  // draw identical rectangles. Each column is a full cycle instead, split into the
-  // share paid on time and the share paid late.
+  // Bars are a full cycle split on-time/late; height by count would be uniform.
   const cycles = d.byCycle || [];
   for (const c of cycles) {
     const paid = Number(c.paid);

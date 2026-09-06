@@ -6,17 +6,13 @@
 //   GROUP#<id> | MEMBER#<userId>    -> membership + payout position
 //   USER#<id>  | GROUP#<groupId>    -> mirror row, powers "my groups"
 //   GROUP#<id> | CONTRIB#<cycle>#<userId> -> the ledger
-//   RESET#<tokenHash> | TOKEN -> single-use password reset, checked against expiresAt
-// ponytail: mirror rows instead of a GSI. Two writes beats an index to provision,
-// backfill and pay for. Add a GSI when a query appears that mirroring cannot serve.
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand, TransactWriteCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
 const TABLE = process.env.TABLE_NAME || 'rosca';
 
-// Set DYNAMO_ENDPOINT to run against DynamoDB Local (see README). The dummy
-// credentials are required because the SDK refuses to sign without any, and
-// DynamoDB Local ignores their value.
+// DYNAMO_ENDPOINT runs against DynamoDB Local. The dummy credentials exist only
+// because the SDK refuses to sign without any.
 const local = process.env.DYNAMO_ENDPOINT;
 const client = new DynamoDBClient({
   region: process.env.AWS_REGION || 'us-east-1',

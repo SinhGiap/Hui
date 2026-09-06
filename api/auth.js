@@ -1,7 +1,6 @@
 'use strict';
 // Password hashing uses node's built-in scrypt rather than bcrypt: no native
 // module to cross-compile for the Lambda runtime, and scrypt is the stronger KDF.
-// [1] NIST SP 800-63B, "Digital Identity Guidelines: Authentication", 2017.
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
@@ -21,10 +20,7 @@ function verifyPassword(plain, stored) {
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
-// Rules are checked in one place so register, reset and change-password cannot
-// drift apart. Length does more for strength than symbol classes, so the floor is
-// 8 with a mix that rules out "password" and "12345678" rather than a long list of
-// required punctuation nobody remembers.
+// One place, so register, reset and change-password cannot drift apart.
 function passwordProblem(plain) {
   const p = String(plain || '');
   if (p.length < 8) return 'password must be at least 8 characters';
@@ -35,11 +31,9 @@ function passwordProblem(plain) {
   return null;
 }
 
-// Tamper-evidence for account rows. Editing a name, email or password hash
-// straight in the DynamoDB console produces a record whose signature no longer
-// matches, and loadProfile refuses it. Signing covers identity only: the
-// reliability counters move through atomic ADD updates that cannot recompute a
-// signature in the same write.
+// Tamper-evidence: editing a name, email or password hash in the console breaks
+// the signature and loadProfile refuses the row. Identity fields only - the
+// counters move through atomic ADD updates that cannot re-sign in the same write.
 const PROFILE_FIELDS = ['userId', 'email', 'name', 'passwordHash'];
 const signRecord = (rec) => crypto
   .createHmac('sha256', SECRET)

@@ -21,10 +21,7 @@ const GLUE_DATABASE = process.env.GLUE_DATABASE || 'rosca_analytics';
 const GLUE_CRAWLER = process.env.GLUE_CRAWLER || 'rosca-ledger-crawler';
 const WORKGROUP = process.env.ATHENA_WORKGROUP || 'primary';
 
-// Nightly: dump every contribution as one JSON object per line. Athena reads
-// NDJSON natively, so no Parquet conversion step to build or debug.
-// ponytail: full table scan each night. Fine to five figures of rows; switch to
-// a DynamoDB Stream -> Firehose feed if the export ever runs long.
+// One JSON object per line: Athena reads NDJSON natively, so no Parquet step.
 async function exportHandler() {
   const contributions = await db.scanAll('CONTRIB#');
   const dt = isoDay(new Date());
@@ -107,8 +104,7 @@ async function runReport(groupId) {
   return { byMember, byCycle };
 }
 
-// Same numbers straight from DynamoDB, for the demo before the first nightly
-// export has run (and if Athena is unavailable in the lab session).
+// Same numbers from DynamoDB, for before the first export or if Athena is down.
 async function liveReport(groupId) {
   const contributions = await db.query(`GROUP#${groupId}`, 'CONTRIB#');
   const perMember = new Map();

@@ -1,8 +1,6 @@
 'use strict';
 // Third-party (non-AWS) APIs. Both are keyless and free, so no credential ever
 // has to live in the Learner Lab environment.
-// [1] Nager.Date Public Holiday API. https://date.nager.at/swagger/index.html
-// [2] ExchangeRate-API open endpoint. https://www.exchangerate-api.com/docs/free
 
 const cache = new Map(); // per-container memo; a cold start just re-fetches.
 const TTL_MS = 6 * 60 * 60 * 1000;
@@ -31,8 +29,7 @@ async function publicHolidays(countryCode, years) {
   return all;
 }
 
-// Members of a diaspora group often think in a different currency than the pot
-// is denominated in, so group pages show both.
+// Members often think in a different currency, so group pages show both.
 async function convert(amount, from, to) {
   if (!to || from === to) return null;
   const rates = await cached(`fx:${from}`, async () => {

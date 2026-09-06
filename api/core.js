@@ -5,19 +5,15 @@ const crypto = require('crypto');
 const PRIOR_ON_TIME = 5;
 const PRIOR_TOTAL = 10;
 
-// Bayesian prior so a brand-new member sits at 50 rather than 0, and one lucky
-// payment does not buy a 100. Beta(5,5) smoothing over the on-time ratio.
-// ponytail: prior is a guess at "neutral trust" — tune PRIOR_* if scores read
-// too forgiving in the demo data.
+// Beta(5,5) smoothing: a new member sits at 50, and one payment cannot buy 100.
 function reliability(onTime, total) {
   return Math.round((100 * (onTime + PRIOR_ON_TIME)) / (total + PRIOR_TOTAL));
 }
 
 const isoDay = (d) => d.toISOString().slice(0, 10);
 
-// A contribution due on a weekend or public holiday cannot clear through a bank,
-// so penalising a member for it would be wrong. Shift forward to the next day
-// money can actually move. `holidays` is a Set of YYYY-MM-DD from the Nager.Date API.
+// Money cannot clear on a closed day, so shift forward rather than mark someone
+// late. `holidays` is a Set of YYYY-MM-DD from the Nager.Date API.
 function nextBusinessDay(date, holidays = new Set()) {
   const d = new Date(date.getTime());
   while (d.getUTCDay() === 0 || d.getUTCDay() === 6 || holidays.has(isoDay(d))) {
@@ -36,8 +32,8 @@ function cycleDueDates(startDate, cycleLengthDays, cycleCount, holidays = new Se
   });
 }
 
-// Fisher-Yates with crypto randomness. A sort(() => Math.random() - 0.5) shuffle
-// is shorter but measurably biased, and payout order decides who gets the pot first.
+// Fisher-Yates with crypto randomness: a sort()-based shuffle is measurably
+// biased, and this decides who gets the pot first.
 function shuffle(items) {
   const a = [...items];
   for (let i = a.length - 1; i > 0; i--) {
@@ -47,10 +43,8 @@ function shuffle(items) {
   return a;
 }
 
-// Which cycle is live right now: the first whose due date has not passed.
-// Returns dueDates.length + 1 once every cycle is behind us, so callers can test
-// `cycle > dueDates.length` for "group complete" without it colliding with the
-// genuinely-live final cycle.
+// First cycle whose due date has not passed. Returns dueDates.length + 1 once all
+// are behind us, so `cycle > dueDates.length` means complete.
 function currentCycle(dueDates, today = isoDay(new Date())) {
   const idx = dueDates.findIndex((d) => d >= today);
   return idx === -1 ? dueDates.length + 1 : idx + 1;

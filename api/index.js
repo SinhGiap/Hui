@@ -1,9 +1,6 @@
 'use strict';
 // Lambda entry point. One function serves every route behind an API Gateway
 // {proxy+} resource.
-// ponytail: a single "Lambda-lith" instead of a function per endpoint. One zip,
-// one role, one set of logs, and the routing table in routes.js reads like an
-// Express app. Split a route out only if its memory or timeout needs diverge.
 const { dispatch, HttpError } = require('./routes');
 const { exportHandler } = require('./analytics');
 

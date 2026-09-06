@@ -234,8 +234,7 @@ async function phaseWeb() {
     await new Promise((r) => setTimeout(r, 3000));
   }
 
-  // ponytail: SingleInstance. No load balancer to provision or pay for, and the
-  // demo is one grader at a time. Flip to LoadBalanced here if you need the ASG.
+  // SingleInstance: no load balancer to provision. Flip to LoadBalanced for an ASG.
   const OptionSettings = [
     { Namespace: 'aws:autoscaling:launchconfiguration', OptionName: 'IamInstanceProfile', Value: 'LabInstanceProfile' },
     { Namespace: 'aws:elasticbeanstalk:environment', OptionName: 'ServiceRole', Value: ROLE },

@@ -40,8 +40,7 @@ const profileKey = (userId) => [`USER#${userId}`, 'PROFILE'];
 async function loadProfile(userId) {
   const p = await db.get(...profileKey(userId));
   if (!p) throw new HttpError(404, 'user not found');
-  // An account row edited straight in the DynamoDB console no longer matches its
-  // signature, so the app refuses to act on it rather than trusting the change.
+  // A row edited straight in the console no longer matches its signature.
   if (!recordIntact(p)) throw new HttpError(409, 'this account record has been modified outside the application');
   return p;
 }
@@ -101,17 +100,15 @@ async function login({ body }) {
   // enumerate which emails are registered.
   const profile = lookup && (await db.get(...profileKey(lookup.userId)));
   if (!profile || !verifyPassword(password, profile.passwordHash)) throw new HttpError(401, 'email or password is incorrect');
-  // Check the signature here too, not just in loadProfile. Otherwise swapping a
-  // passwordHash straight into the table would still mint a valid session, which
-  // is precisely the attack the signature exists to stop.
+  // Also checked here, not just in loadProfile: otherwise swapping a passwordHash
+  // straight into the table would still mint a valid session.
   if (!recordIntact(profile)) throw new HttpError(409, 'this account record has been modified outside the application');
   return { token: sign(profile), user: publicUser(profile) };
 }
 
 const me = async ({ user }) => ({ user: publicUser(await loadProfile(user.sub)) });
 
-// Every account write re-signs the row, so a legitimate change keeps the record
-// verifiable while a console edit does not.
+// Every account write re-signs the row, so legitimate changes stay verifiable.
 const reSign = (next, UpdateExpression, ExpressionAttributeValues, ExpressionAttributeNames) => db.update({
   Key: { PK: `USER#${next.userId}`, SK: 'PROFILE' },
   UpdateExpression,
@@ -124,8 +121,7 @@ async function updateProfile({ body, user }) {
   const profile = await loadProfile(user.sub);
   const next = { ...profile, name };
   await reSign(next, 'SET #n = :n, sig = :s', { ':n': name }, { '#n': 'name' });
-  // The JWT carries the display name, so hand back a fresh one rather than
-  // leaving the nav showing the old name until the token expires.
+  // The JWT carries the display name, so reissue it or the nav shows the old one.
   return { user: publicUser(next), token: sign(next) };
 }
 
@@ -143,10 +139,8 @@ async function changePassword({ body, user }) {
   return { changed: true };
 }
 
-// ponytail: no emailed token. SES earns no marks here and cannot reach the
-// @example.com demo accounts from the sandbox, and the reset was accepted without
-// verification - so anyone who knows a registered address can set its password.
-// That is a demo affordance, not a production reset.
+// NOT a production reset: there is no emailed token, so anyone who knows a
+// registered address can set its password.
 async function resetPassword({ body }) {
   const email = str(body, 'email', { max: 120 }).toLowerCase();
   const password = str(body, 'password', { min: 1, max: 200 });
@@ -189,9 +183,8 @@ async function createGroup({ body, user }) {
   return { group };
 }
 
-// currentCycle and complete are derived, never stored, so the list and the detail
-// view have to derive them the same way - a finished circle that reads "Everyone
-// has been paid" on its own page must not read "Cycle 3 of 2" in the list.
+// Derived, never stored: the list and detail views must agree, or a finished
+// circle reads "Everyone has been paid" on one page and "Cycle 3 of 2" on the other.
 function withProgress(g) {
   const cycle = g.dueDates.length ? currentCycle(g.dueDates) : 0;
   return { ...g, currentCycle: cycle, complete: g.dueDates.length > 0 && cycle > g.dueDates.length };
@@ -214,9 +207,8 @@ async function groupDetail({ params, query, user }) {
   }));
 
   const rawContributions = await db.query(`GROUP#${params.id}`, 'CONTRIB#');
-  // CloudFront is the fast path, but Learner Lab denies it outright in some
-  // accounts, so fall back to a presigned GET. Signing is local HMAC with no API
-  // call, so doing it per row costs nothing worth optimising.
+  // CloudFront when available, else a presigned GET. Signing is local HMAC, so
+  // doing it per row costs no API calls.
   const contributions = await Promise.all(rawContributions.map(async (c) => ({
     ...c,
     evidenceUrl: !c.evidenceKey ? null
@@ -244,8 +236,8 @@ async function joinGroup({ params, user }) {
   const now = new Date().toISOString();
 
   try {
-    // The seat-count check rides in the same transaction as the join, so two
-    // people taking the last seat at once cannot both get in.
+    // Seat check rides in the same transaction, so two people cannot take the
+    // last seat at once.
     await db.transact([
       { Update: {
         TableName: db.TABLE, Key: { PK: `GROUP#${params.id}`, SK: 'META' },
@@ -289,9 +281,8 @@ async function startGroup({ params, user }) {
 
 async function addContribution({ params, body, user }) {
   const group = await loadGroup(params.id);
-  // Authorise before reporting state: a non-member asking about a group that has
-  // not started should be told they are not a member, not that it is not
-  // collecting yet.
+  // Authorise before reporting state, or a non-member learns whether a circle
+  // has started.
   await requireMember(params.id, user.sub);
   if (group.status !== 'ACTIVE') throw new HttpError(409, 'this group is not collecting contributions yet');
 
@@ -306,8 +297,7 @@ async function addContribution({ params, body, user }) {
   const onTime = isOnTime(paidAt, dueDate);
 
   try {
-    // The ledger row and the reliability counters move together: a payment can
-    // never be recorded without being scored, or be scored twice.
+    // Ledger row and counters move together: never recorded unscored, never twice.
     await db.transact([
       { Put: {
         TableName: db.TABLE,
@@ -340,17 +330,11 @@ async function ledger({ params, query }) {
 
 // The browser uploads payment evidence straight to S3 with this URL, so image
 // bytes never pass through Lambda's 6 MB payload limit.
-// ---------------------------------------------------------------------------
-// DEMO ONLY. Reliability only becomes visible once payments land on either side
-// of a due date, and nobody can wait a fortnight during a demo. The server clock
-// cannot move, so this moves the due dates instead: one press brings the current
-// cycle's deadline to today (pay now = on time), the next shoves it three days
-// into the past (pay now = late).
-//
-// ponytail: gated on DEMO_MODE rather than deleted before submission, so the
-// marker can drive it. Unset DEMO_MODE and the route 404s like it was never
-// there. Only rewrites dueDates - contributions keep the dueDate stamped on them
-// when they were written, so nothing already logged is rescored.
+// DEMO ONLY. The server clock cannot move, so this moves the due dates instead:
+// one press brings the current deadline to today (pay now = on time), the next
+// shoves it three days past (pay now = late). Unset DEMO_MODE and the route 404s.
+// Only dueDates change; logged contributions keep their own dueDate and are never
+// rescored.
 const shiftDay = (iso, days) => {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -369,12 +353,8 @@ async function demoAdvance({ params, user }) {
   const cycle = currentCycle(group.dueDates);
   const last = group.dueDates[group.dueDates.length - 1];
 
-  // Signed days to add to every due date:
-  //   past the end  -> forward, so the final cycle is due today again. Without
-  //                    this the circle reads complete, the control disappears and
-  //                    the demo is stranded with no way back.
-  //   future deadline-> back onto today, so paying now scores on time.
-  //   today or behind-> back three more days, so paying now scores late.
+  // Signed days to shift every due date. Past the end it moves forward, so a
+  // finished circle can be replayed instead of stranding the demo.
   const delta = cycle > group.dueDates.length ? daysApart(today, last)
     : group.dueDates[cycle - 1] > today ? -daysApart(group.dueDates[cycle - 1], today)
       : -3;
@@ -390,8 +370,7 @@ async function demoAdvance({ params, user }) {
     dueDates,
     movedBackDays: -delta,
     currentCycle: currentCycle(dueDates),
-    // The demo operator's actual question: did that press put a deadline behind
-    // us, so the next payment against it scores late?
+
     overdueCycles: dueDates.filter((d) => d < today).length,
   };
 }
@@ -415,9 +394,8 @@ async function report({ params, query }) {
   if (query.source === 'live') return { source: 'dynamodb', ...(await liveReport(params.id)) };
   try {
     const rows = await runReport(params.id);
-    // Athena succeeds with zero rows for a circle the nightly export has not
-    // picked up yet, so an empty result is a miss, not an answer - fall through
-    // to the live rollup rather than showing a blank report.
+    // Athena returns zero rows for a circle the export has not reached yet, so an
+    // empty result is a miss, not an answer.
     if (rows.byMember.length) return { source: 'athena', ...rows };
     return { source: 'dynamodb', note: 'no nightly export for this group yet; showing live DynamoDB rollup', ...(await liveReport(params.id)) };
   } catch (e) {
