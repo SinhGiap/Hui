@@ -12,10 +12,13 @@
             <p class="sub" id="gsub"></p>
           </div>
           <div class="headactions">
+            <button class="testbtn" id="democlock" type="button" hidden></button>
+            <button class="ghost" id="invitebtn" type="button" hidden>Copy invite link</button>
             <button class="ghost" id="joinbtn" type="button" hidden>Join this circle</button>
             <button class="primary" id="startbtn" type="button" hidden>Start the rotation</button>
           </div>
         </div>
+        <input class="invitelink" id="invitelink" readonly hidden aria-label="Invite link">
         <div class="facts" id="facts"></div>
       </div>
     </div>
@@ -29,7 +32,7 @@
 
       <div class="panel tabbed" data-panel="members">
         <table class="table">
-          <thead><tr><th>Seat</th><th>Member</th><th>Reliability</th><th>Paid on time</th><th>Takes the pot</th></tr></thead>
+          <thead><tr><th>Seat</th><th>Member</th><th>Reliability</th><th>Paid on time</th><th>This cycle</th><th>Takes the pot</th></tr></thead>
           <tbody id="members"></tbody>
         </table>
       </div>
@@ -44,7 +47,7 @@
           <label class="field">
             <span>Payment evidence, if you have it</span>
             <input type="file" name="evidence" accept="image/png,image/jpeg,image/webp">
-            <small class="hint">Uploaded straight to S3 and served back through CloudFront.</small>
+            <small class="hint">Uploaded straight to S3 with a presigned URL, so the image never passes through the API.</small>
           </label>
           <div class="actions">
             <button class="primary" type="submit">Log contribution</button>

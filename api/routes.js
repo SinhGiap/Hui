@@ -1,6 +1,6 @@
 'use strict';
 const crypto = require('crypto');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const db = require('./db');
 const { hashPassword, verifyPassword, sign, readToken } = require('./auth');
@@ -11,6 +11,7 @@ const { runReport, liveReport } = require('./analytics');
 const s3 = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
 const EVIDENCE_BUCKET = process.env.EVIDENCE_BUCKET;
 const CDN_DOMAIN = process.env.CDN_DOMAIN;
+const DEMO_MODE = process.env.DEMO_MODE === '1';   // demo clock route, off unless explicitly enabled
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -143,12 +144,22 @@ async function groupDetail({ params, query, user }) {
     return { ...publicUser(p), joinedAt: m.joinedAt, payoutPosition: position === -1 ? null : position + 1 };
   }));
 
-  const contributions = await db.query(`GROUP#${params.id}`, 'CONTRIB#');
+  const rawContributions = await db.query(`GROUP#${params.id}`, 'CONTRIB#');
+  // CloudFront is the fast path, but Learner Lab denies it outright in some
+  // accounts, so fall back to a presigned GET. Signing is local HMAC with no API
+  // call, so doing it per row costs nothing worth optimising.
+  const contributions = await Promise.all(rawContributions.map(async (c) => ({
+    ...c,
+    evidenceUrl: !c.evidenceKey ? null
+      : CDN_DOMAIN ? `https://${CDN_DOMAIN}/${c.evidenceKey}`
+        : await getSignedUrl(s3, new GetObjectCommand({ Bucket: EVIDENCE_BUCKET, Key: c.evidenceKey }), { expiresIn: 3600 }),
+  })));
   const cycle = group.dueDates.length ? currentCycle(group.dueDates) : 0;
   const converted = await convert(group.contributionAmount, group.currency, (query.display || '').toUpperCase()).catch(() => null);
 
   return {
     group: { ...group, currentCycle: cycle, complete: group.dueDates.length > 0 && cycle > group.dueDates.length },
+    demo: DEMO_MODE,
     isMember: members.some((m) => m.userId === user.sub),
     members: members.sort((a, b) => (a.payoutPosition || 99) - (b.payoutPosition || 99)),
     contributions,
@@ -210,8 +221,11 @@ async function startGroup({ params, user }) {
 
 async function addContribution({ params, body, user }) {
   const group = await loadGroup(params.id);
-  if (group.status !== 'ACTIVE') throw new HttpError(409, 'this group is not collecting contributions yet');
+  // Authorise before reporting state: a non-member asking about a group that has
+  // not started should be told they are not a member, not that it is not
+  // collecting yet.
   await requireMember(params.id, user.sub);
+  if (group.status !== 'ACTIVE') throw new HttpError(409, 'this group is not collecting contributions yet');
 
   const cycle = num(body, 'cycle', { min: 1, max: group.dueDates.length, integer: true });
   const amount = num(body, 'amount', { min: 1, max: 1e9 });
@@ -258,6 +272,56 @@ async function ledger({ params, query }) {
 
 // The browser uploads payment evidence straight to S3 with this URL, so image
 // bytes never pass through Lambda's 6 MB payload limit.
+// ---------------------------------------------------------------------------
+// DEMO ONLY. Reliability only becomes visible once payments land on either side
+// of a due date, and nobody can wait a fortnight during a demo. The server clock
+// cannot move, so this moves the due dates instead: one press brings the current
+// cycle's deadline to today (pay now = on time), the next shoves it three days
+// into the past (pay now = late).
+//
+// ponytail: gated on DEMO_MODE rather than deleted before submission, so the
+// marker can drive it. Unset DEMO_MODE and the route 404s like it was never
+// there. Only rewrites dueDates - contributions keep the dueDate stamped on them
+// when they were written, so nothing already logged is rescored.
+const shiftDay = (iso, days) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+const daysApart = (a, b) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000);
+
+async function demoAdvance({ params, user }) {
+  if (!DEMO_MODE) throw new HttpError(404, `no route for POST /groups/${params.id}/demo/advance`);
+  const group = await loadGroup(params.id);
+  if (group.ownerId !== user.sub) throw new HttpError(403, 'only the organiser can move the demo clock');
+  if (group.status !== 'ACTIVE') throw new HttpError(409, 'start the rotation first');
+
+  const today = new Date().toISOString().slice(0, 10);
+  const cycle = currentCycle(group.dueDates);
+  if (cycle > group.dueDates.length) throw new HttpError(409, 'every cycle is already past its due date');
+
+  const due = group.dueDates[cycle - 1];
+  // Future deadline: land it exactly on today. Already today or behind: push it
+  // further back so the next payment is unambiguously late.
+  const shift = due > today ? daysApart(due, today) : 3;
+  const dueDates = group.dueDates.map((d) => shiftDay(d, -shift));
+
+  await db.update({
+    Key: { PK: `GROUP#${params.id}`, SK: 'META' },
+    UpdateExpression: 'SET dueDates = :d',
+    ExpressionAttributeValues: { ':d': dueDates },
+  });
+
+  return {
+    dueDates,
+    movedBackDays: shift,
+    currentCycle: currentCycle(dueDates),
+    // The demo operator's actual question: did that press put a deadline behind
+    // us, so the next payment against it scores late?
+    overdueCycles: dueDates.filter((d) => d < today).length,
+  };
+}
+
 async function presign({ body, user }) {
   const contentType = str(body, 'contentType', { max: 60 });
   if (!/^image\/(png|jpe?g|webp)$/.test(contentType)) bad('evidence must be a PNG, JPEG or WebP image');
@@ -276,7 +340,12 @@ async function report({ params, query }) {
   await loadGroup(params.id);
   if (query.source === 'live') return { source: 'dynamodb', ...(await liveReport(params.id)) };
   try {
-    return { source: 'athena', ...(await runReport(params.id)) };
+    const rows = await runReport(params.id);
+    // Athena succeeds with zero rows for a circle the nightly export has not
+    // picked up yet, so an empty result is a miss, not an answer - fall through
+    // to the live rollup rather than showing a blank report.
+    if (rows.byMember.length) return { source: 'athena', ...rows };
+    return { source: 'dynamodb', note: 'no nightly export for this group yet; showing live DynamoDB rollup', ...(await liveReport(params.id)) };
   } catch (e) {
     return { source: 'dynamodb', note: `Athena unavailable (${e.message}); showing live DynamoDB rollup`, ...(await liveReport(params.id)) };
   }
@@ -299,6 +368,7 @@ const table = [
   ['POST', '/groups/:id/contributions', addContribution, false],
   ['GET', '/groups/:id/ledger', ledger, false],
   ['GET', '/groups/:id/report', report, false],
+  ['POST', '/groups/:id/demo/advance', demoAdvance, false],
   ['POST', '/uploads/presign', presign, false],
 ].map(([method, path, handler, isPublic]) => ({ method, path, handler, isPublic, re: compile(path), names: paramNames(path) }));
 

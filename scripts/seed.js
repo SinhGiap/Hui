@@ -34,9 +34,11 @@ async function main() {
   const accounts = [];
   for (const p of PEOPLE) accounts.push({ ...(await signUp({ name: p.name, email: p.email })), pattern: p.pattern });
 
-  // Start 12 weeks back so four fortnightly cycles are already due.
+  // Start 45 days back so three fortnightly cycles are already history and the
+  // fourth is still ahead. The circle has to be mid-rotation for the demo: a
+  // completed circle has no cycle left to pay and hides the demo clock.
   const start = new Date();
-  start.setUTCDate(start.getUTCDate() - 84);
+  start.setUTCDate(start.getUTCDate() - 45);
   const startDate = start.toISOString().slice(0, 10);
 
   console.log('creating group...');
@@ -56,8 +58,12 @@ async function main() {
 
   console.log('writing ledger history...');
   const counters = new Map();
+  const today = new Date().toISOString().slice(0, 10);
   for (let cycle = 1; cycle <= started.dueDates.length; cycle++) {
     const dueDate = started.dueDates[cycle - 1];
+    // Only settled cycles get history. Everything from the current cycle on is
+    // left unpaid so the demo has a live payment to make.
+    if (dueDate >= today) break;
     for (const a of accounts) {
       const onTimeIntent = a.pattern[cycle - 1] === 1;
       const paid = new Date(`${dueDate}T10:00:00Z`);

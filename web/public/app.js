@@ -258,6 +258,7 @@ async function initGroup(user) {
 
   $('#joinbtn').onclick = async () => { await api(`/groups/${id}/join`, { method: 'POST' }); location.reload(); };
   $('#startbtn').onclick = async () => { await api(`/groups/${id}/start`, { method: 'POST' }); location.reload(); };
+  $('#democlock').onclick = async () => { await api(`/groups/${id}/demo/advance`, { method: 'POST' }); location.reload(); };
 }
 
 async function render(id, user) {
@@ -302,6 +303,23 @@ async function render(id, user) {
   $('#joinbtn').hidden = d.isMember || !open || g.memberCount >= g.memberCap;
   $('#startbtn').hidden = !(g.ownerId === user.userId && open && g.memberCount >= 2);
 
+  // Invites are just the circle's own URL: anyone signed in who opens it while
+  // seats remain gets the Join button. No invite tokens, no pending-member state.
+  const invite = $('#invitebtn');
+  invite.hidden = !(d.isMember && open && g.memberCount < g.memberCap);
+  invite.onclick = () => copyLink(invite, 'Copy invite link');
+
+  // Demo clock. Only the organiser sees it, only while DEMO_MODE is on, and the
+  // label says what the next press will do rather than making you guess.
+  const clock = $('#democlock');
+  const canDemo = d.demo && g.ownerId === user.userId && g.status === 'ACTIVE' && !g.complete;
+  clock.hidden = !canDemo;
+  if (canDemo) {
+    const today = new Date().toISOString().slice(0, 10);
+    const due = g.dueDates[g.currentCycle - 1];
+    clock.textContent = due > today ? 'Test: jump to due date' : 'Test: push past due date';
+  }
+
   const tbody = $('#members');
   tbody.textContent = '';
   for (const m of d.members) {
@@ -310,11 +328,42 @@ async function render(id, user) {
       el('td', {}, m.name + (m.userId === g.ownerId ? ' (organiser)' : '')),
       el('td', {}, scoreCell(m.reliability)),
       el('td', { className: 'muted' }, `${m.onTimeCount} of ${m.contribCount}`),
+      el('td', {}, thisCycleTag(d, m)),
       el('td', {}, m.payoutPosition && g.dueDates.length ? day(g.dueDates[m.payoutPosition - 1]) : '—')));
   }
 
   renderLedger(d);
   setupPayForm(id, d);
+}
+
+// An organiser's real question is "who still owes me for this cycle". The answer
+// is already in the group payload, so it belongs as a column on the table that
+// already lists everyone rather than a separate organiser-only page.
+function thisCycleTag(d, member) {
+  const cycle = d.group.currentCycle;
+  if (!cycle || cycle > d.group.dueDates.length) return el('span', { className: 'tag wait' }, '—');
+  const paid = d.contributions.find((c) => c.cycle === cycle && c.userId === member.userId);
+  if (!paid) return el('span', { className: 'tag wait' }, 'Not paid');
+  return el('span', { className: `tag ${paid.onTime ? '' : 'late'}`.trim() }, paid.onTime ? 'On time' : 'Late');
+}
+
+// Beanstalk serves plain http, so navigator.clipboard does not exist here and
+// execCommand('copy') needs a user gesture Chrome no longer grants a script.
+// Revealing the link pre-selected always works; the clipboard is the bonus path
+// for whenever this sits behind https.
+async function copyLink(button, label) {
+  const url = location.href;
+  const field = $('#invitelink');
+  try {
+    await navigator.clipboard.writeText(url);
+    button.textContent = 'Link copied';
+    setTimeout(() => { button.textContent = label; }, 2000);
+  } catch {
+    field.value = url;
+    field.hidden = false;
+    field.select();
+    button.textContent = 'Copy this link';
+  }
 }
 
 function renderLedger(d) {
@@ -333,8 +382,10 @@ function renderLedger(d) {
       el('td', { className: 'muted' }, c.dueDate),
       el('td', { className: 'muted' }, day(c.paidAt)),
       el('td', {}, el('span', { className: `tag ${c.onTime ? '' : 'late'}`.trim() }, c.onTime ? 'On time' : 'Late')),
-      el('td', {}, c.evidenceKey && window.CONFIG.cdnDomain
-        ? el('a', { href: `https://${window.CONFIG.cdnDomain}/${c.evidenceKey}`, target: '_blank', rel: 'noopener' }, 'View')
+      // The API decides how evidence is reachable - CloudFront when it exists,
+      // a presigned GET when it does not - so the page just follows the link.
+      el('td', {}, c.evidenceUrl
+        ? el('a', { href: c.evidenceUrl, target: '_blank', rel: 'noopener' }, 'View')
         : '—')));
   }
 }
