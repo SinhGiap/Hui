@@ -1,5 +1,5 @@
 'use strict';
-// Everything bootstrap.js does not create: Lambda x2, API Gateway, CloudFront,
+// Everything bootstrap.js does not create: Lambda x2, API Gateway,
 // Beanstalk, the EventBridge schedule and the Athena result location.
 //
 // Learner Lab sessions expire every ~4 hours and accounts get reset, so every
@@ -8,12 +8,11 @@
 // next phase and the local scripts pick them up without hand-editing.
 //
 // Run: npm run deploy            (all phases)
-//      npm run deploy -- lambda  (one phase: lambda|api|cdn|web|cron|athena)
+//      npm run deploy -- lambda  (one phase: lambda|api|web|cron|athena)
 const fs = require('fs');
 const { build: buildZip } = require('./zip');
 const { LambdaClient, CreateFunctionCommand, UpdateFunctionCodeCommand, UpdateFunctionConfigurationCommand, AddPermissionCommand, GetFunctionCommand } = require('@aws-sdk/client-lambda');
 const { APIGatewayClient, GetRestApisCommand, CreateRestApiCommand, GetResourcesCommand, CreateResourceCommand, PutMethodCommand, PutIntegrationCommand, CreateDeploymentCommand } = require('@aws-sdk/client-api-gateway');
-const { CloudFrontClient, CreateOriginAccessControlCommand, ListOriginAccessControlsCommand, CreateDistributionCommand, ListDistributionsCommand } = require('@aws-sdk/client-cloudfront');
 const { S3Client, PutObjectCommand, PutBucketPolicyCommand } = require('@aws-sdk/client-s3');
 const { ElasticBeanstalkClient, CreateApplicationCommand, CreateApplicationVersionCommand, DescribeApplicationVersionsCommand, CreateEnvironmentCommand, DescribeEnvironmentsCommand, UpdateEnvironmentCommand, ListAvailableSolutionStacksCommand } = require('@aws-sdk/client-elastic-beanstalk');
 const { EventBridgeClient, PutRuleCommand, PutTargetsCommand } = require('@aws-sdk/client-eventbridge');
@@ -23,7 +22,6 @@ const region = process.env.AWS_REGION || 'us-east-1';
 const cfg = { region };
 const lambda = new LambdaClient(cfg);
 const apigw = new APIGatewayClient(cfg);
-const cf = new CloudFrontClient(cfg);
 const s3 = new S3Client(cfg);
 const eb = new ElasticBeanstalkClient(cfg);
 const events = new EventBridgeClient(cfg);
@@ -45,7 +43,7 @@ const LAMBDA_ENV = ['TABLE_NAME', 'EVIDENCE_BUCKET', 'ANALYTICS_BUCKET', 'CDN_DO
 
 const log = (...a) => console.log(' ', ...a);
 const exists = (e) => ['ResourceConflictException', 'ResourceAlreadyExistsException', 'EntityAlreadyExists',
-  'OriginAccessControlAlreadyExists', 'DistributionAlreadyExists', 'InvalidParameterValue',
+  'InvalidParameterValue',
   'TooManyApplicationVersions'].includes(e.name);
 
 // Writes a value back into .env so later phases and `npm run dev` see it.
@@ -143,64 +141,6 @@ async function phaseApi() {
   log(`deployed ${base}`);
 }
 
-// -------------------------------------------------------------- cloudfront ----
-async function phaseCdn() {
-  console.log('\nCloudFront');
-  const oacName = `${APP}-evidence-oac`;
-  const { OriginAccessControlList } = await cf.send(new ListOriginAccessControlsCommand({}));
-  let oacId = (OriginAccessControlList.Items || []).find((o) => o.Name === oacName)?.Id;
-  if (!oacId) {
-    const r = await cf.send(new CreateOriginAccessControlCommand({
-      OriginAccessControlConfig: { Name: oacName, OriginAccessControlOriginType: 's3', SigningBehavior: 'always', SigningProtocol: 'sigv4' },
-    }));
-    oacId = r.OriginAccessControl.Id;
-  }
-  log(`oac      ${oacId}`);
-
-  const originDomain = `${EVIDENCE}.s3.${region}.amazonaws.com`;
-  const { DistributionList } = await cf.send(new ListDistributionsCommand({}));
-  let dist = (DistributionList.Items || []).find((d) => (d.Origins.Items || []).some((o) => o.DomainName === originDomain));
-  if (!dist) {
-    const r = await cf.send(new CreateDistributionCommand({
-      DistributionConfig: {
-        CallerReference: `${APP}-${Date.now()}`,
-        Comment: 'Hui payment evidence',
-        Enabled: true,
-        Origins: { Quantity: 1, Items: [{ Id: 'evidence', DomainName: originDomain, OriginAccessControlId: oacId, S3OriginConfig: { OriginAccessIdentity: '' } }] },
-        DefaultCacheBehavior: {
-          TargetOriginId: 'evidence',
-          ViewerProtocolPolicy: 'redirect-to-https',
-          AllowedMethods: { Quantity: 2, Items: ['GET', 'HEAD'], CachedMethods: { Quantity: 2, Items: ['GET', 'HEAD'] } },
-          CachePolicyId: '658327ea-f89d-4fab-a63d-7e88639e58f6', // managed CachingOptimized
-          Compress: true,
-        },
-      },
-    }));
-    dist = r.Distribution;
-    log(`created  ${dist.Id}`);
-  } else {
-    log(`exists   ${dist.Id}`);
-  }
-
-  // OAC signs requests as the distribution, so the bucket stays private and only
-  // this distribution can read it.
-  await s3.send(new PutBucketPolicyCommand({
-    Bucket: EVIDENCE,
-    Policy: JSON.stringify({
-      Version: '2012-10-17',
-      Statement: [{
-        Sid: 'AllowCloudFrontRead',
-        Effect: 'Allow',
-        Principal: { Service: 'cloudfront.amazonaws.com' },
-        Action: 's3:GetObject',
-        Resource: `arn:aws:s3:::${EVIDENCE}/*`,
-        Condition: { StringEquals: { 'AWS:SourceArn': `arn:aws:cloudfront::${ACCOUNT}:distribution/${dist.Id}` } },
-      }],
-    }),
-  }));
-  setEnv('CDN_DOMAIN', dist.DomainName);
-  log(`domain   ${dist.DomainName}  (takes ~10 min to finish deploying)`);
-}
 
 // --------------------------------------------------------------- beanstalk ----
 async function phaseWeb() {
@@ -280,7 +220,7 @@ async function phaseAthena() {
   log(`results  ${OutputLocation}`);
 }
 
-const PHASES = { lambda: phaseLambda, api: phaseApi, cdn: phaseCdn, web: phaseWeb, cron: phaseCron, athena: phaseAthena };
+const PHASES = { lambda: phaseLambda, api: phaseApi, web: phaseWeb, cron: phaseCron, athena: phaseAthena };
 
 async function main() {
   if (!ROLE) { console.error('Set LAB_ROLE_ARN in .env (npm run bootstrap prints how).'); process.exit(1); }

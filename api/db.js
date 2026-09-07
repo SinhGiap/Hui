@@ -54,4 +54,4 @@ async function scanAll(skPrefix) {
   return items;
 }
 
-module.exports = { TABLE, doc, get, put, update, del, query, transact, scanAll };
+module.exports = { TABLE, get, put, update, del, query, transact, scanAll };

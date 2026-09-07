@@ -52,4 +52,4 @@ function currentCycle(dueDates, today = isoDay(new Date())) {
 
 const isOnTime = (paidAtIso, dueDate) => paidAtIso.slice(0, 10) <= dueDate;
 
-module.exports = { reliability, nextBusinessDay, cycleDueDates, shuffle, currentCycle, isOnTime, isoDay, PRIOR_ON_TIME, PRIOR_TOTAL };
+module.exports = { reliability, nextBusinessDay, cycleDueDates, shuffle, currentCycle, isOnTime, isoDay };

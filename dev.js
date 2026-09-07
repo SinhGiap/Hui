@@ -1,7 +1,7 @@
 'use strict';
 // Local stand-in for API Gateway. Wraps the exact same dispatch() the Lambda
 // uses, so what runs on your laptop is the deployed code path minus the gateway.
-// Point it at the Learner Lab's real DynamoDB (npm run create-table first).
+// Point it at the Learner Lab's real DynamoDB (npm run bootstrap first).
 const express = require('express');
 const { dispatch, HttpError } = require('./api/routes');
 

@@ -36,9 +36,7 @@ cannot give you: portable credit history for people outside the formal banking s
                 │  single table │        │  presigned PUT │    │  Nager.Date     │
                 └───────┬───────┘        └───────┬────────┘    │  ExchangeRate   │
                         │                        v             └─────────────────┘
-                        │                ┌────────────────┐
-                        │                │  CloudFront    │  serves evidence images
-                        │                └────────────────┘
+                        │                presigned GET back to the browser
                         │
    EventBridge (nightly cron)
                         v
@@ -61,7 +59,6 @@ cannot give you: portable credit history for people outside the formal banking s
 | **Lambda** | All business logic: auth, circle lifecycle, ledger writes, reliability scoring, presigning, reporting. Also the nightly export. Cost is zero between cycles, which suits traffic that spikes on due dates. |
 | **DynamoDB** | Users, circles, memberships and the contribution ledger. Every access pattern is a key lookup, and transactions guarantee a payment is never recorded without also being scored. |
 | **S3** | Payment-evidence images, written by the browser with presigned PUTs so bytes never cross Lambda. Also the analytics data lake. |
-| **CloudFront** | Serves evidence images to members close to them, and keeps the evidence bucket off the public internet. |
 | **Glue** | Crawls the nightly ledger export and maintains the table schema Athena reads. |
 | **Athena** | SQL over the exported ledger, powering the per-circle on-time reporting page. |
 | **EventBridge** | Nightly cron that fires the export Lambda. *(Application Integration category — not worth marks, included because it is the right trigger.)* |
@@ -70,9 +67,13 @@ cannot give you: portable credit history for people outside the formal banking s
 
 ### Marks this maps to
 
-Beanstalk 6 + API Gateway 6 + Lambda 6 + DynamoDB 3 + S3 3 + CloudFront 3 + Glue 3 + Athena 3 = 33,
-capped at **25**. Two third-party APIs cover the 4-mark allowance. There is deliberate headroom: even
-if Glue and Athena are unavailable in the lab account, the remaining services still total 27.
+Beanstalk 6 + API Gateway 6 + Lambda 6 + DynamoDB 3 + S3 3 + Glue 3 + Athena 3 = 30, plus two
+third-party APIs at 2 each = **34 raw**, against a criterion worth 25 with a 32-point rating tier.
+Clears both.
+
+CloudFront was designed in as the evidence delivery path but this Learner Lab account denies it
+account-wide, so the code falls back to presigned S3 GETs. It costs nothing: 34 is already over
+the cap either way.
 
 ---
 
@@ -131,36 +132,28 @@ DynamoDB in your Learner Lab account.
 
 ## Deploy to AWS Learner Lab
 
-Learner Lab **cannot create IAM roles**. Everything below reuses the pre-provisioned `LabRole`.
-Region is `us-east-1`. Sessions expire after ~4 hours; resources survive, credentials do not.
+Learner Lab **cannot create IAM roles**, so everything reuses the pre-provisioned
+`LabRole`. Region is `us-east-1`. Sessions expire after ~4 hours; resources
+survive, credentials do not.
 
-**0. Credentials.** Start the lab, open *AWS Details → AWS CLI*, paste into `~/.aws/credentials`.
-Copy the `LabRole` ARN from IAM into `.env` as `LAB_ROLE_ARN`.
+**1. Credentials.** Start the lab, open *AWS Details -> AWS CLI*, and paste the
+three `aws_...` lines into `.env`. Paste only those three lines - a `[default]`
+header breaks `node --env-file`. Copy the `LabRole` ARN into `.env` as
+`LAB_ROLE_ARN`.
 
-**1. Infrastructure.** `npm run bootstrap` — DynamoDB table, both S3 buckets (with the CORS rule the
-presigned upload needs), the Glue database and the crawler.
+**2. Infrastructure.** `npm run bootstrap` - DynamoDB table, both S3 buckets with
+the CORS rule the presigned upload needs, the Glue database and the crawler.
 
-**2. Lambda.** `npm run package:api` → upload `dist-api.zip`.
-- Runtime Node.js 20.x, handler `api/index.handler`, role `LabRole`, timeout **30s** (Athena polls).
-- Environment: `TABLE_NAME`, `EVIDENCE_BUCKET`, `ANALYTICS_BUCKET`, `CDN_DOMAIN`, `GLUE_DATABASE`,
-  `GLUE_CRAWLER`, `ATHENA_WORKGROUP`, `JWT_SECRET`, `ALLOWED_ORIGIN`.
-- Second function from the same zip, handler `api/index.nightlyExport`, timeout 60s.
+**3. Everything else.** `npm run deploy` - packages and ships both Lambdas, the
+API Gateway proxy resource and stage, the Beanstalk application and environment,
+the EventBridge schedule, and the Athena result location. Every phase is
+idempotent, so re-running is the recovery procedure rather than a mistake. It
+writes `API_BASE` back into `.env` itself.
 
-**3. API Gateway.** REST API → resource `/{proxy+}` → `ANY` → Lambda proxy integration → deploy to
-stage `prod`. Enable CORS on the resource. The handler strips the stage prefix itself, so
-`https://…/prod` is the value for `API_BASE`.
+Run one phase on its own with `npm run deploy -- lambda web` (phases:
+`lambda|api|web|cron|athena`).
 
-**4. Beanstalk.** `npm run package:web` → new Node.js 20 application, upload `dist-web.zip`.
-- Instance profile **`LabInstanceProfile`**, service role **`LabRole`** (Beanstalk cannot make its own).
-- Environment properties: `API_BASE` (step 3), `CDN_DOMAIN` (step 5).
-
-**5. CloudFront.** Distribution with the evidence bucket as origin, Origin Access Control on, viewer
-protocol redirect-to-HTTPS. Put the distribution domain in `CDN_DOMAIN` on both Lambda and Beanstalk.
-
-**6. EventBridge.** Schedule rule `cron(0 15 * * ? *)` → target the `nightlyExport` function.
-
-**7. Athena.** Set the workgroup query result location to `s3://<ANALYTICS_BUCKET>/athena-results/`.
-Run the export once by hand (test the nightly function) so the crawler has data to catalog.
+**4. Demo data.** `npm run seed` - four members and a circle three cycles deep.
 
 ### Verify
 
