@@ -81,13 +81,19 @@ async function athenaQuery(sql) {
 // Per-group reliability report shown on the Reports page.
 async function runReport(groupId) {
   const safeId = String(groupId).replace(/[^A-Za-z0-9_-]/g, ''); // Athena has no bind parameters here
+  // Each nightly run exports the WHOLE ledger into its own dt= partition, so the
+  // table holds one complete snapshot per night. Reading every partition would
+  // count each contribution once per night it has existed; only the newest
+  // partition is current. Athena prunes to that one partition.
+  const latest = `dt = (SELECT max(dt) FROM ledger)`;
+
   const byMember = await athenaQuery(`
     SELECT user_name,
            COUNT(*) AS payments,
            SUM(on_time) AS on_time,
            ROUND(100.0 * SUM(on_time) / COUNT(*), 1) AS on_time_pct
     FROM ledger
-    WHERE group_id = '${safeId}'
+    WHERE group_id = '${safeId}' AND ${latest}
     GROUP BY user_name
     ORDER BY on_time_pct DESC`);
 
@@ -97,7 +103,7 @@ async function runReport(groupId) {
            SUM(on_time) AS on_time,
            SUM(amount) AS pot
     FROM ledger
-    WHERE group_id = '${safeId}'
+    WHERE group_id = '${safeId}' AND ${latest}
     GROUP BY cycle
     ORDER BY cycle`);
 
