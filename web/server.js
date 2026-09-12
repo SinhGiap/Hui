@@ -24,7 +24,7 @@ app.get('/group/:id', (req, res) => res.render('group', { groupId: req.params.id
 // An explicit endpoint makes a failing deploy obvious in the console.
 app.get('/health', (req, res) => res.json({ ok: true, apiBase: config.apiBase }));
 
-app.use((req, res) => res.status(404).render('signin', { notFound: true }));
+app.use((req, res) => res.status(404).render('signin'));
 
 // Beanstalk's Node platform proxies to whatever PORT it sets, defaulting to 8080.
 const port = process.env.PORT || 3000;

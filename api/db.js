@@ -26,14 +26,24 @@ const update = (params) => doc.send(new UpdateCommand({ TableName: TABLE, ...par
 const del = (PK, SK) => doc.send(new DeleteCommand({ TableName: TABLE, Key: { PK, SK } }));
 const transact = (TransactItems) => doc.send(new TransactWriteCommand({ TransactItems }));
 
+// Query returns at most 1 MB per call. A circle is capped at 30 members so its
+// ledger stays well inside that today, but an un-paged read silently truncates
+// rather than failing, so follow the cursor.
 async function query(PK, skPrefix) {
-  const out = await doc.send(new QueryCommand({
-    TableName: TABLE,
-    KeyConditionExpression: skPrefix ? '#pk = :pk AND begins_with(#sk, :sk)' : '#pk = :pk',
-    ExpressionAttributeNames: skPrefix ? { '#pk': 'PK', '#sk': 'SK' } : { '#pk': 'PK' },
-    ExpressionAttributeValues: skPrefix ? { ':pk': PK, ':sk': skPrefix } : { ':pk': PK },
-  }));
-  return out.Items || [];
+  const items = [];
+  let ExclusiveStartKey;
+  do {
+    const out = await doc.send(new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: skPrefix ? '#pk = :pk AND begins_with(#sk, :sk)' : '#pk = :pk',
+      ExpressionAttributeNames: skPrefix ? { '#pk': 'PK', '#sk': 'SK' } : { '#pk': 'PK' },
+      ExpressionAttributeValues: skPrefix ? { ':pk': PK, ':sk': skPrefix } : { ':pk': PK },
+      ExclusiveStartKey,
+    }));
+    items.push(...(out.Items || []));
+    ExclusiveStartKey = out.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return items;
 }
 
 // Only the nightly analytics export uses this. Everything user-facing queries by key.
@@ -43,9 +53,13 @@ async function scanAll(skPrefix) {
   do {
     const out = await doc.send(new ScanCommand({
       TableName: TABLE,
-      FilterExpression: 'begins_with(#sk, :sk)',
-      ExpressionAttributeNames: { '#sk': 'SK' },
-      ExpressionAttributeValues: { ':sk': skPrefix },
+      // No prefix means every row - begins_with on an empty string is not a
+      // valid filter, so drop the expression rather than pass one.
+      ...(skPrefix ? {
+        FilterExpression: 'begins_with(#sk, :sk)',
+        ExpressionAttributeNames: { '#sk': 'SK' },
+        ExpressionAttributeValues: { ':sk': skPrefix },
+      } : {}),
       ExclusiveStartKey,
     }));
     items.push(...(out.Items || []));

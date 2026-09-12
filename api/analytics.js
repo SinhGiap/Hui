@@ -10,6 +10,7 @@ const { AthenaClient, StartQueryExecutionCommand, GetQueryExecutionCommand, GetQ
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const db = require('./db');
 const { reliability, isoDay } = require('./core');
+const { contribIntact } = require('./auth');
 
 const region = process.env.AWS_REGION || 'us-east-1';
 const s3 = new S3Client({ region });
@@ -23,7 +24,12 @@ const WORKGROUP = process.env.ATHENA_WORKGROUP || 'primary';
 
 // One JSON object per line: Athena reads NDJSON natively, so no Parquet step.
 async function exportHandler() {
-  const contributions = await db.scanAll('CONTRIB#');
+  const all = await db.scanAll('CONTRIB#');
+  // The report reads Athena first and the DynamoDB rollup only as a fallback, so
+  // filtering one and not the other would let a forged row into the numbers users
+  // actually see. Drop them here too, and say how many in the log.
+  const contributions = all.filter(contribIntact);
+  const skipped = all.length - contributions.length;
   const dt = isoDay(new Date());
   const lines = contributions.map((c) => JSON.stringify({
     group_id: c.groupId,
@@ -50,7 +56,7 @@ async function exportHandler() {
     if (e.name !== 'CrawlerRunningException') throw e;
   });
 
-  return { exported: contributions.length, partition: dt };
+  return { exported: contributions.length, skippedFailingIntegrity: skipped, partition: dt };
 }
 
 async function athenaQuery(sql) {
@@ -112,7 +118,11 @@ async function runReport(groupId) {
 
 // Same numbers from DynamoDB, for before the first export or if Athena is down.
 async function liveReport(groupId) {
-  const contributions = await db.query(`GROUP#${groupId}`, 'CONTRIB#');
+  const all = await db.query(`GROUP#${groupId}`, 'CONTRIB#');
+  // A row edited in the table must not silently improve the numbers, so it is
+  // counted separately and reported rather than folded into the totals.
+  const contributions = all.filter(contribIntact);
+  const tampered = all.length - contributions.length;
   const perMember = new Map();
   const perCycle = new Map();
   for (const c of contributions) {
@@ -125,6 +135,7 @@ async function liveReport(groupId) {
     perCycle.set(c.cycle, k);
   }
   return {
+    tampered,
     byMember: [...perMember.values()]
       .map((m) => ({ ...m, on_time_pct: Math.round((1000 * m.on_time) / m.payments) / 10, score: reliability(m.on_time, m.payments) }))
       .sort((a, b) => b.on_time_pct - a.on_time_pct),
@@ -132,4 +143,4 @@ async function liveReport(groupId) {
   };
 }
 
-module.exports = { exportHandler, runReport, liveReport, athenaQuery };
+module.exports = { exportHandler, runReport, liveReport };

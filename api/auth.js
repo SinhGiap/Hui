@@ -31,21 +31,53 @@ function passwordProblem(plain) {
   return null;
 }
 
-// Tamper-evidence: editing a name, email or password hash in the console breaks
-// the signature and loadProfile refuses the row. Identity fields only - the
-// counters move through atomic ADD updates that cannot re-sign in the same write.
-const PROFILE_FIELDS = ['userId', 'email', 'name', 'passwordHash'];
-const signRecord = (rec) => crypto
+// Tamper-evidence: a row edited straight in the table no longer matches its
+// signature, and the application refuses or flags it.
+//
+// IAM is the real control - nobody should hold write access to the production
+// table - but the lab cannot create per-function roles, so this is the
+// defence-in-depth layer rather than the only one.
+//
+// Only rows the application never rewrites are signed. A signature over a
+// mutable field has to be recomputed on every write, and recomputing it from a
+// stale read silently locks the row out of its own application - a worse failure
+// than the tampering it defends against. So the counters stay unsigned and move
+// by atomic ADD, and group settings are not signed at all. The reliability score
+// is still checkable, because it is derivable from the signed ledger.
+//
+// PK and SK are signed so a valid row copied into another partition or sort key
+// stops verifying there.
+const FIELDS = {
+  profile: ['PK', 'SK', 'userId', 'email', 'name', 'passwordHash'],
+  // The ledger. Written once and never updated, which is what makes it safe to
+  // sign. evidenceKey is included: groupDetail presigns a GET for whatever key
+  // the row carries, so an unsigned key is a read of any object in the bucket.
+  contrib: ['PK', 'SK', 'groupId', 'userId', 'userName', 'cycle', 'amount',
+    'currency', 'dueDate', 'paidAt', 'onTime', 'evidenceKey'],
+  // Without this, repointing EMAIL#<addr> at another userId logs you in as them.
+  email: ['PK', 'SK', 'userId'],
+};
+
+// JSON.stringify rather than template interpolation, so the signature binds the
+// stored type: number 0 and string "0" must not hash alike, or swapping a
+// counter's DynamoDB type turns arithmetic into string concatenation.
+const signRecord = (rec, kind = 'profile') => crypto
   .createHmac('sha256', SECRET)
-  .update(PROFILE_FIELDS.map((f) => `${f}=${rec[f] ?? ''}`).join('\u0000'))
+  .update(`${kind} ` + FIELDS[kind].map((f) => `${f}=${JSON.stringify(rec[f] ?? null)}`).join('\u0000'))
   .digest('hex');
 
-function recordIntact(rec) {
-  if (!rec || typeof rec.sig !== 'string') return false;
-  const expected = Buffer.from(signRecord(rec), 'hex');
+function recordIntact(rec, kind = 'profile') {
+  // An unknown kind must fail closed, not throw a 500 out of a read path.
+  if (!FIELDS[kind] || !rec || typeof rec.sig !== 'string') return false;
+  const expected = Buffer.from(signRecord(rec, kind), 'hex');
   const actual = Buffer.from(rec.sig, 'hex');
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
+
+// The ledger is the only signed row read on hot paths, and it is checked in four
+// places (two that flag, two that exclude). Naming it once keeps the record kind
+// and the policy from drifting apart across them.
+const contribIntact = (c) => recordIntact(c, 'contrib');
 
 const sign = (user) => jwt.sign({ sub: user.userId, email: user.email, name: user.name }, SECRET, { expiresIn: TOKEN_TTL });
 
@@ -59,4 +91,4 @@ function readToken(header) {
   }
 }
 
-module.exports = { hashPassword, verifyPassword, sign, readToken, passwordProblem, signRecord, recordIntact };
+module.exports = { hashPassword, verifyPassword, sign, readToken, passwordProblem, signRecord, recordIntact, contribIntact };

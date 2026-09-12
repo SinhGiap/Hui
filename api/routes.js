@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const db = require('./db');
-const { hashPassword, verifyPassword, sign, readToken, passwordProblem, signRecord, recordIntact } = require('./auth');
+const { hashPassword, verifyPassword, sign, readToken, passwordProblem, signRecord, recordIntact, contribIntact } = require('./auth');
 const { reliability, cycleDueDates, shuffle, currentCycle, isOnTime } = require('./core');
 const { publicHolidays, convert } = require('./external');
 const { runReport, liveReport } = require('./analytics');
@@ -36,6 +36,25 @@ const COUNTRY = /^[A-Z]{2}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const profileKey = (userId) => [`USER#${userId}`, 'PROFILE'];
+
+// Keys and signatures are storage detail. Publishing the HMAC tag next to the
+// exact bytes it covers hands out free (message, tag) pairs for a key that also
+// signs the session tokens, so strip them on the way out.
+const external = ({ PK, SK, sig, ...row }) => row;
+
+// The email -> userId lookup is signed: repointing it in the table would
+// otherwise hand an attacker a login as whoever they point it at.
+function emailRow(email, userId) {
+  const row = { PK: `EMAIL#${email}`, SK: 'USER', userId };
+  row.sig = signRecord(row, 'email');
+  return row;
+}
+async function lookupEmail(email) {
+  const row = await db.get(`EMAIL#${email}`, 'USER');
+  if (!row) return null;
+  if (!recordIntact(row, 'email')) throw new HttpError(409, 'this account record has been modified outside the application');
+  return row;
+}
 
 async function loadProfile(userId) {
   const p = await db.get(...profileKey(userId));
@@ -83,7 +102,7 @@ async function register({ body }) {
     // Both rows land or neither does, so an email can never map to a half-made user.
     await db.transact([
       { Put: { TableName: db.TABLE, Item: user, ConditionExpression: 'attribute_not_exists(PK)' } },
-      { Put: { TableName: db.TABLE, Item: { PK: `EMAIL#${email}`, SK: 'USER', userId }, ConditionExpression: 'attribute_not_exists(PK)' } },
+      { Put: { TableName: db.TABLE, Item: emailRow(email, userId), ConditionExpression: 'attribute_not_exists(PK)' } },
     ]);
   } catch (e) {
     if (e.name === 'TransactionCanceledException') throw new HttpError(409, 'that email is already registered');
@@ -95,7 +114,7 @@ async function register({ body }) {
 async function login({ body }) {
   const email = str(body, 'email', { max: 120 }).toLowerCase();
   const password = str(body, 'password', { min: 1, max: 200 });
-  const lookup = await db.get(`EMAIL#${email}`, 'USER');
+  const lookup = await lookupEmail(email);
   // One error message for both failure modes, so the response cannot be used to
   // enumerate which emails are registered.
   const profile = lookup && (await db.get(...profileKey(lookup.userId)));
@@ -147,7 +166,7 @@ async function resetPassword({ body }) {
   const weak = passwordProblem(password);
   if (weak) bad(weak);
 
-  const lookup = await db.get(`EMAIL#${email}`, 'USER');
+  const lookup = await lookupEmail(email);
   if (!lookup) throw new HttpError(404, 'no account uses that email address');
   const profile = await loadProfile(lookup.userId);
   const next = { ...profile, passwordHash: hashPassword(password) };
@@ -180,14 +199,14 @@ async function createGroup({ body, user }) {
     { Put: { TableName: db.TABLE, Item: { PK: `GROUP#${groupId}`, SK: `MEMBER#${user.sub}`, groupId, userId: user.sub, userName: profile.name, joinedAt: now } } },
     { Put: { TableName: db.TABLE, Item: { PK: `USER#${user.sub}`, SK: `GROUP#${groupId}`, groupId, groupName: name, joinedAt: now } } },
   ]);
-  return { group };
+  return { group: external(group) };
 }
 
 // Derived, never stored: the list and detail views must agree, or a finished
 // circle reads "Everyone has been paid" on one page and "Cycle 3 of 2" on the other.
 function withProgress(g) {
   const cycle = g.dueDates.length ? currentCycle(g.dueDates) : 0;
-  return { ...g, currentCycle: cycle, complete: g.dueDates.length > 0 && cycle > g.dueDates.length };
+  return { ...external(g), currentCycle: cycle, complete: g.dueDates.length > 0 && cycle > g.dueDates.length };
 }
 
 async function myGroups({ user }) {
@@ -210,7 +229,10 @@ async function groupDetail({ params, query, user }) {
   // CloudFront when available, else a presigned GET. Signing is local HMAC, so
   // doing it per row costs no API calls.
   const contributions = await Promise.all(rawContributions.map(async (c) => ({
-    ...c,
+    ...external(c),
+    // Surfaced rather than thrown: a forged row should be visible in the ledger
+    // it was forged into, not hidden behind an error page for the whole circle.
+    tampered: !contribIntact(c),
     evidenceUrl: !c.evidenceKey ? null
       : CDN_DOMAIN ? `https://${CDN_DOMAIN}/${c.evidenceKey}`
         : await getSignedUrl(s3, new GetObjectCommand({ Bucket: EVIDENCE_BUCKET, Key: c.evidenceKey }), { expiresIn: 3600 }),
@@ -241,6 +263,8 @@ async function joinGroup({ params, user }) {
     await db.transact([
       { Update: {
         TableName: db.TABLE, Key: { PK: `GROUP#${params.id}`, SK: 'META' },
+        // Atomic increment, not read-then-write: two people taking the last seat
+        // at once must both be judged against the same stored count.
         UpdateExpression: 'SET memberCount = memberCount + :one',
         ConditionExpression: 'memberCount < memberCap AND #s = :open',
         ExpressionAttributeNames: { '#s': 'status' },
@@ -290,20 +314,28 @@ async function addContribution({ params, body, user }) {
   const amount = num(body, 'amount', { min: 1, max: 1e9 });
   if (amount !== group.contributionAmount) bad(`this group contributes ${group.contributionAmount} ${group.currency} per cycle`);
   const evidenceKey = body.evidenceKey ? str(body, 'evidenceKey', { max: 300 }) : undefined;
+  // presign() builds the key server-side under evidence/<group>/<user>/, but the
+  // client hands it back here, so it has to be checked again: groupDetail presigns
+  // a GET for whatever key this row carries, and an unchecked key reads any object
+  // in the bucket.
+  if (evidenceKey && !evidenceKey.startsWith(`evidence/${params.id}/${user.sub}/`)) {
+    throw new HttpError(403, 'that evidence file does not belong to you');
+  }
 
   const profile = await loadProfile(user.sub);
   const paidAt = new Date().toISOString();
   const dueDate = group.dueDates[cycle - 1];
   const onTime = isOnTime(paidAt, dueDate);
 
+  const row = { PK: `GROUP#${params.id}`, SK: `CONTRIB#${String(cycle).padStart(3, '0')}#${user.sub}`, groupId: params.id, groupName: group.name, userId: user.sub, userName: profile.name, cycle, amount, currency: group.currency, dueDate, paidAt, onTime, evidenceKey };
+  row.sig = signRecord(row, 'contrib');
+
   try {
     // Ledger row and counters move together: never recorded unscored, never twice.
     await db.transact([
-      { Put: {
-        TableName: db.TABLE,
-        Item: { PK: `GROUP#${params.id}`, SK: `CONTRIB#${String(cycle).padStart(3, '0')}#${user.sub}`, groupId: params.id, groupName: group.name, userId: user.sub, userName: profile.name, cycle, amount, currency: group.currency, dueDate, paidAt, onTime, evidenceKey },
-        ConditionExpression: 'attribute_not_exists(SK)',
-      } },
+      { Put: { TableName: db.TABLE, Item: row, ConditionExpression: 'attribute_not_exists(SK)' } },
+      // Counters are deliberately outside the profile signature, so ADD is safe
+      // here: it creates the attribute if absent and cannot lose an update.
       { Update: {
         TableName: db.TABLE, Key: { PK: `USER#${user.sub}`, SK: 'PROFILE' },
         UpdateExpression: 'ADD contribCount :one, onTimeCount :hit',
@@ -325,7 +357,8 @@ async function addContribution({ params, body, user }) {
 async function ledger({ params, query }) {
   await loadGroup(params.id);
   const prefix = query.cycle ? `CONTRIB#${String(Number(query.cycle)).padStart(3, '0')}#` : 'CONTRIB#';
-  return { contributions: await db.query(`GROUP#${params.id}`, prefix) };
+  const rows = await db.query(`GROUP#${params.id}`, prefix);
+  return { contributions: rows.map((c) => ({ ...external(c), tampered: !contribIntact(c) })) };
 }
 
 // The browser uploads payment evidence straight to S3 with this URL, so image

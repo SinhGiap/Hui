@@ -25,11 +25,19 @@ function nextBusinessDay(date, holidays = new Set()) {
 function cycleDueDates(startDate, cycleLengthDays, cycleCount, holidays = new Set()) {
   const start = new Date(`${startDate}T00:00:00Z`);
   if (Number.isNaN(start.getTime())) throw new Error('invalid startDate');
-  return Array.from({ length: cycleCount }, (_, i) => {
+  const dates = [];
+  for (let i = 0; i < cycleCount; i++) {
     const due = new Date(start.getTime());
     due.setUTCDate(due.getUTCDate() + (i + 1) * cycleLengthDays);
-    return isoDay(nextBusinessDay(due, holidays));
-  });
+    // A weekend or a long holiday run (Tet) can roll a short cycle onto the day
+    // the previous one already landed on. currentCycle() finds the first date not
+    // yet passed, so a repeated date makes the second cycle unreachable and the
+    // circle reads complete a cycle early. Keep them strictly increasing.
+    const prev = dates[dates.length - 1];
+    if (prev && isoDay(due) <= prev) due.setTime(Date.parse(`${prev}T00:00:00Z`) + 86400000);
+    dates.push(isoDay(nextBusinessDay(due, holidays)));
+  }
+  return dates;
 }
 
 // Fisher-Yates with crypto randomness: a sort()-based shuffle is measurably

@@ -16,7 +16,7 @@ const TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.
 
 // Each tier ships only what it loads: the API never requires express or ejs, the
 // web tier never requires an AWS SDK, and the deploy-only SDKs belong in neither.
-const BUILD_ONLY = ['client-api-gateway', 'client-cloudfront', 'client-elastic-beanstalk',
+const BUILD_ONLY = ['client-api-gateway', 'client-elastic-beanstalk',
   'client-eventbridge', 'client-lambda'].map((p) => `node_modules/@aws-sdk/${p}`);
 
 const BUNDLES = {

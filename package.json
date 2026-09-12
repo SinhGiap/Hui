@@ -14,7 +14,8 @@
     "dynamo": "docker run -d --rm -p 8010:8000 --name hui-dynamo amazon/dynamodb-local",
     "dynamo:stop": "docker rm -f hui-dynamo",
     "deploy": "node --env-file=.env scripts/deploy.js",
-    "smoke": "node --env-file=.env scripts/smoke.js"
+    "smoke": "node --env-file=.env scripts/smoke.js",
+    "resign": "node --env-file=.env scripts/resign.js"
   },
   "dependencies": {
     "@aws-sdk/client-athena": "^3.700.0",

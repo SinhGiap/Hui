@@ -460,7 +460,11 @@ function renderLedger(d) {
       el('td', {}, money(c.amount, c.currency)),
       el('td', { className: 'muted' }, c.dueDate),
       el('td', { className: 'muted' }, day(c.paidAt)),
-      el('td', {}, el('span', { className: `tag ${c.onTime ? '' : 'late'}`.trim() }, c.onTime ? 'On time' : 'Late')),
+      // A row whose HMAC no longer matches was edited outside the app. Show it
+      // rather than hide it: the point of the ledger is that forgery is visible.
+      el('td', {}, c.tampered
+        ? el('span', { className: 'tag late', title: 'This row does not match its signature - it was edited outside the application' }, 'Tampered')
+        : el('span', { className: `tag ${c.onTime ? '' : 'late'}`.trim() }, c.onTime ? 'On time' : 'Late')),
       // The API decides how evidence is reachable; the page follows the link.
       el('td', {}, c.evidenceUrl
         ? el('a', { href: c.evidenceUrl, target: '_blank', rel: 'noopener' }, 'View')
@@ -555,8 +559,11 @@ async function loadReport(id) {
   const source = $('#reportsource');
   source.textContent = d.source === 'athena' ? 'Athena over the Glue catalog' : 'Live DynamoDB rollup';
   source.className = `tag small ${d.source === 'athena' ? '' : 'wait'}`.trim();
-  $('#reportnote').hidden = !d.note;
-  if (d.note) $('#reportnote').textContent = d.note;
+  const note = d.tampered
+    ? `${d.note ? d.note + ' ' : ''}${d.tampered} ledger row${d.tampered === 1 ? '' : 's'} failed the integrity check and ${d.tampered === 1 ? 'is' : 'are'} excluded from these numbers.`
+    : d.note;
+  $('#reportnote').hidden = !note;
+  if (note) $('#reportnote').textContent = note;
 
   // Bars are a full cycle split on-time/late; height by count would be uniform.
   const cycles = d.byCycle || [];

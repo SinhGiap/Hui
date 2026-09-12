@@ -8,6 +8,7 @@
 const db = require('../api/db');
 const { dispatch } = require('../api/routes');
 const { reliability, isOnTime } = require('../api/core');
+const { signRecord } = require('../api/auth');
 
 const PASSWORD = 'Rosca!2026';
 const PEOPLE = [
@@ -71,14 +72,18 @@ async function main() {
       const paidAt = paid.toISOString();
       const onTime = isOnTime(paidAt, dueDate);
 
-      await db.put({
+      // Signed exactly as the API would sign it, or the ledger it seeds reads
+      // back as tampered.
+      const row = {
         PK: `GROUP#${group.groupId}`,
         SK: `CONTRIB#${String(cycle).padStart(3, '0')}#${a.user.userId}`,
         groupId: group.groupId, groupName: group.name,
         userId: a.user.userId, userName: a.user.name,
         cycle, amount: group.contributionAmount, currency: group.currency,
         dueDate, paidAt, onTime,
-      });
+      };
+      row.sig = signRecord(row, 'contrib');
+      await db.put(row);
 
       const c = counters.get(a.user.userId) || { total: 0, onTime: 0 };
       c.total++; c.onTime += onTime ? 1 : 0;
